@@ -123,4 +123,55 @@ class AnalysisResult:
             
         # Читаем данные из Excel и сохраняем в CSV
         df = pd.read_excel(csv_path.replace('.csv', '.xlsx'), engine="openpyxl")
-        df.to_csv(csv_path, index=False, encoding='utf-8') 
+        df.to_csv(csv_path, index=False, encoding='utf-8')
+
+    def to_excel_division(self, excel_path: str) -> None:
+        """
+        Сохранение результатов в Excel файл
+
+        Args:
+            excel_path: путь к файлу Excel
+        """
+        if not self.has_data():
+            # Создаем пустой DataFrame если нет данных
+            pd.DataFrame().to_excel(excel_path, index=False)
+            return
+
+        # Объединяем все DataFrame в один
+        final_frame = pd.concat(self.data_frames, ignore_index=True)
+        final_frame.to_excel(excel_path, index=False)
+
+        # Добавляем дополнительные листы если есть данные
+        with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+            # Форматируем проценты в основном листе
+            workbook = writer.book
+            worksheet = workbook['Sheet1']
+
+            # Форматируем проценты
+            for cell in worksheet['F']:
+                if cell.row > 1:
+                    if cell.value is not None and isinstance(cell.value, (int, float)):
+                        cell.number_format = '0%'
+
+        # Добавляем NPS если есть
+        if not self.nps_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.nps_frame.to_excel(writer, sheet_name='NPS', index=False)
+
+                # Форматируем проценты
+                workbook = writer.book
+                worksheet = workbook['NPS']
+                for cell in worksheet['C']:
+                    if cell.row > 1:
+                        if cell.value is not None and isinstance(cell.value, (int, float)):
+                            cell.number_format = '0.00%'
+
+        # Добавляем CSI если есть
+        if not self.csi_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.csi_frame.to_excel(writer, sheet_name='CSI', index=False)
+
+        # Добавляем свободные ответы если есть
+        if not self.free_answers_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.free_answers_frame.to_excel(writer, sheet_name='Открытые комментарии', index=False)

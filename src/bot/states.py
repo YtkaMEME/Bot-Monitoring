@@ -18,6 +18,8 @@ class MainState(StatesGroup):
     gender = State()
     age = State()
     art_school = State()
+    division = State()
+    division_number = State()
     
 
 class AdminState(StatesGroup):

@@ -40,6 +40,7 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
         gender = user_data["gender"]
         art_school = user_data["art_school"]
         question_numbers_weights = [gender, age, art_school]
+    division = user_data["division"]
 
     # Загружаем файл
     await bot.download(file=doc, destination=path)
@@ -51,7 +52,7 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
     excel_path, csv_path = await process_data(path, mood, nps, csi,
                                               message,
                                               analyze_type,
-                                              question_numbers_weights)
+                                              question_numbers_weights, division)
 
     # Удаляем исходный файл
     if os.path.exists(path):
@@ -142,8 +143,8 @@ async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext)
     await callback_query.message.delete()
 
     if analyze_type == "standard":
-        await state.set_state(MainState.mood)
-        await callback_query.message.answer("Присутствует вопрос про настроение?", reply_markup=get_yes_no_keyboard())
+        await state.set_state(MainState.division)
+        await callback_query.message.answer("Хотите ли вы разделять выгрузку по какому либо вопросу?", reply_markup=get_yes_no_keyboard())
     else:
         # Переходим на следующий шаг
         await state.set_state(MainState.gender)
@@ -153,6 +154,7 @@ async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext)
 @router.message(MainState.mood, F.text == "Да")
 @router.message(MainState.nps, F.text == "Да")
 @router.message(MainState.csi, F.text == "Да")
+@router.message(MainState.division, F.text == "Да")
 async def yes_quest(message: Message, state: FSMContext):
     """Обработчик ответа 'Да' на вопросы о наличии специальных вопросов"""
     current_state = await state.get_state()
@@ -167,11 +169,14 @@ async def yes_quest(message: Message, state: FSMContext):
         await state.set_state(MainState.nps_number)
     elif current_state == MainState.mood:
         await state.set_state(MainState.mood_number)
+    elif current_state == MainState.division:
+        await state.set_state(MainState.division_number)
 
 
 @router.message(MainState.mood, F.text == "Нет")
 @router.message(MainState.nps, F.text == "Нет")
 @router.message(MainState.csi, F.text == "Нет")
+@router.message(MainState.division, F.text == "Нет")
 async def no_quest(message: Message, state: FSMContext):
     """Обработчик ответа 'Нет' на вопросы о наличии специальных вопросов"""
     current_state = await state.get_state()
@@ -202,6 +207,9 @@ async def no_quest(message: Message, state: FSMContext):
     elif current_state == MainState.mood:
         await state.set_state(MainState.nps)
         await message.answer("Присутствует ли NPS вопрос?", reply_markup=keyboard)
+    elif current_state == MainState.division:
+        await state.set_state(MainState.mood)
+        await message.answer("Присутствует вопрос про настроение?", reply_markup=keyboard)
 
 
 @router.message(MainState.num_person)
@@ -211,6 +219,7 @@ async def no_quest(message: Message, state: FSMContext):
 @router.message(MainState.gender)
 @router.message(MainState.age)
 @router.message(MainState.art_school)
+@router.message(MainState.division_number)
 async def handle_number(message: Message, state: FSMContext):
     """Обработчик ввода числовых значений"""
     if not message.text.isdigit():
@@ -277,8 +286,13 @@ async def handle_number(message: Message, state: FSMContext):
 
     elif current_state == MainState.art_school:
         await state.update_data(art_school=number)
-        await state.set_state(MainState.nps)
-        await message.answer("Присутствуют ли NPS вопросы?", reply_markup=keyboard)
+        await state.set_state(MainState.division)
+        await message.answer("Хотите ли вы разделять выгрузку по какому либо вопросу?", reply_markup=keyboard)
+
+    elif current_state == MainState.division_number:
+        await state.update_data(division=number)
+        await state.set_state(MainState.mood)
+        await message.answer("Присутствует вопрос про настроение?", reply_markup=keyboard)
 
 
 
