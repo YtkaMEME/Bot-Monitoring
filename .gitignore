@@ -56,4 +56,6 @@ Thumbs.db
 TOKEN.py
 config/*.json
 config/*.yaml
-config/*.yml 
+config/*.yml
+
+TOKEN.py
