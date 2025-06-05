@@ -35,12 +35,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    try:
+    # try:
         # Запуск бота
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        # Корректное завершение работы
-        logging.info("Бот остановлен")
-    except Exception as e:
-        # Логирование ошибок
-        logging.error(f"Непредвиденная ошибка: {e}", exc_info=True) 
+    # except (KeyboardInterrupt, SystemExit):
+    #     # Корректное завершение работы
+    #     # logging.info("Бот остановлен")
+    # except Exception as e:
+    #     # Логирование ошибок
+    #     # logging.error(f"Непредвиденная ошибка: {e}", exc_info=True)

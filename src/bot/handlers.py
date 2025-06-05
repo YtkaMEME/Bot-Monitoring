@@ -2,7 +2,8 @@ import os
 import json
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup, FSInputFile
+from aiogram.types import Message, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, \
+    InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from .states import MainState, AdminState
@@ -10,7 +11,7 @@ from .keyboards import get_yes_no_keyboard
 from .bot_instance import bot
 from src.data_processing.processor import process_data
 from config.config import config
-
+from aiogram.types import CallbackQuery
 router = Router()
 
 
@@ -32,7 +33,13 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
     mood = user_data.get("mood_number")
     nps = user_data.get("nps_number")
     csi = user_data.get("csi_number")
-    num_person = user_data["person_number"]
+    analyze_type = user_data["analyze_type"]
+    question_numbers_weights = None
+    if analyze_type == "weighted":
+        age = user_data["age"]
+        gender = user_data["gender"]
+        art_school = user_data["art_school"]
+        question_numbers_weights = [gender, age, art_school]
 
     # Загружаем файл
     await bot.download(file=doc, destination=path)
@@ -41,7 +48,10 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
     await state.clear()
 
     # Обрабатываем данные
-    excel_path, csv_path = await process_data(path, mood, nps, csi, message, num_person)
+    excel_path, csv_path = await process_data(path, mood, nps, csi,
+                                              message,
+                                              analyze_type,
+                                              question_numbers_weights)
 
     # Удаляем исходный файл
     if os.path.exists(path):
@@ -107,9 +117,38 @@ async def get_doc(message: Message, state: FSMContext):
 
     await state.update_data(file_path=file_path, document=document)
 
-    await state.set_state(MainState.num_person)
-    await message.answer("Введите количество участников, прошедших опрос", reply_markup=ReplyKeyboardRemove())
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Стандартный", callback_data="standard"),
+            InlineKeyboardButton(text="Взвешивание", callback_data="weighted")  # исправляем здесь
+        ]
+    ])
 
+    await state.set_state(MainState.type_analyze)
+    await message.answer("Выберите тип обработки", reply_markup=keyboard)
+
+@router.callback_query(MainState.type_analyze, F.data.in_(["standard", "weighted"]))
+async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext):
+    analyze_type = callback_query.data
+
+    if analyze_type == "standard":
+        await state.update_data(analyze_type="standard")
+    else:
+        await state.update_data(analyze_type="weighted")
+
+    await callback_query.answer()  # убирает крутилку у кнопки
+
+    # Удаляем сообщение с инлайн-клавиатурой
+    await callback_query.message.delete()
+
+    if analyze_type == "standard":
+        await state.set_state(MainState.mood)
+        await callback_query.message.answer("Присутствует вопрос про настроение?", reply_markup=get_yes_no_keyboard())
+    else:
+        # Переходим на следующий шаг
+        await state.set_state(MainState.gender)
+        await callback_query.message.answer("Введите номер вопроса определяющего Пол участника",
+                                            reply_markup=ReplyKeyboardRemove())
 
 @router.message(MainState.mood, F.text == "Да")
 @router.message(MainState.nps, F.text == "Да")
@@ -169,6 +208,9 @@ async def no_quest(message: Message, state: FSMContext):
 @router.message(MainState.nps_number)
 @router.message(MainState.mood_number)
 @router.message(MainState.csi_number)
+@router.message(MainState.gender)
+@router.message(MainState.age)
+@router.message(MainState.art_school)
 async def handle_number(message: Message, state: FSMContext):
     """Обработчик ввода числовых значений"""
     if not message.text.isdigit():
@@ -220,6 +262,24 @@ async def handle_number(message: Message, state: FSMContext):
                 os.remove(csv_path)
         except Exception as e:
             await message.answer(f"Произошла ошибка при обработке данных: {e}")
+
+    elif current_state == MainState.gender:
+        await state.update_data(gender=number)
+        await state.set_state(MainState.age)
+        await message.answer("Введите номер вопроса определяющего Возраст участника",
+                             reply_markup=ReplyKeyboardRemove())
+
+    elif current_state == MainState.age:
+        await state.update_data(age=number)
+        await state.set_state(MainState.art_school)
+        await message.answer("Введите номер вопроса определяющего Арт школу участника",
+                             reply_markup=ReplyKeyboardRemove())
+
+    elif current_state == MainState.art_school:
+        await state.update_data(art_school=number)
+        await state.set_state(MainState.nps)
+        await message.answer("Присутствуют ли NPS вопросы?", reply_markup=keyboard)
+
 
 
 @router.message(Command("change_del_list"))

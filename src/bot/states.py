@@ -14,6 +14,10 @@ class MainState(StatesGroup):
     csi_number = State()
     start_process = State()
     num_person = State()
+    type_analyze = State()
+    gender = State()
+    age = State()
+    art_school = State()
     
 
 class AdminState(StatesGroup):
