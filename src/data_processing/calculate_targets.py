@@ -39,7 +39,7 @@ def save_calculation_results(sample_size, target_pol, target_age, target_art):
 
 # Подключение к базе и чтение данных
 def fetch_form_data():
-    DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
+    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
