@@ -1,5 +1,5 @@
-from src.data_processing.calculate_targets import fetch_form_data, save_calculation_results
-from src.data_processing.prepare_target_distributions import prepare_target_distributions
+from .data_processing.calculate_targets import fetch_form_data, save_calculation_results
+from .data_processing.prepare_target_distributions import prepare_target_distributions
 
 
 def calculate_for_web():
