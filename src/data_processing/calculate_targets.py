@@ -9,7 +9,7 @@ from .prepare_target_distributions import prepare_target_distributions
 
 
 def save_calculation_results(sample_size, target_pol, target_age, target_art):
-    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
+    DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -87,7 +87,6 @@ def calculate_weights_from_questions(
         weight = 1.0
         for i, q in enumerate(selected_questions):
             val = row[q.name]
-            print(val)
             target = targets[i].get(val, 0)
             actual = actual_distributions[i].get(val, 1)
             if actual == 0:
@@ -101,7 +100,6 @@ def calculate_weights_from_questions(
 
     weights_df = df.copy()
     weights_df['Вес'] = pd.to_numeric(weights_df['Вес'], errors='coerce').fillna(0).astype(float)
-
     scale = target_sample_size / weights_df['Вес'].sum()
     weights_series= weights_df['Вес'] * scale
 

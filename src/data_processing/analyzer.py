@@ -433,7 +433,7 @@ def free_answer(question: Question) -> Tuple[str, List[str]]:
         Кортеж с названием вопроса и списком ответов
     """
     result = [question.name, []]
-    answers = question.data.iloc[2:]
+    answers = question.data["value"].iloc[2:]
 
     for answer in answers:
         answer = str(answer)
@@ -687,7 +687,7 @@ def analyze_questions(
 
         # Обработка группы свободных ответов
         elif question.type == "Группа свободных ответов":
-            question.name = question.data.iloc[0]
+            question.name = question.data["value"].iloc[0]
             free_question_group = free_answer(question)
             free_answers.append(free_question_group)
             continue
