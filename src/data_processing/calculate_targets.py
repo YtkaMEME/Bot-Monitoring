@@ -9,7 +9,7 @@ from .prepare_target_distributions import prepare_target_distributions
 
 
 def save_calculation_results(sample_size, target_pol, target_age, target_art):
-    DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
+    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
