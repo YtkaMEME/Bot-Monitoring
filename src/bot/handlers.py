@@ -40,7 +40,7 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
         gender = user_data["gender"]
         art_school = user_data["art_school"]
         question_numbers_weights = [gender, age, art_school]
-    division = user_data["division"]
+    division = user_data.get("division")
 
     # Загружаем файл
     await bot.download(file=doc, destination=path)
