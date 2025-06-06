@@ -60,7 +60,7 @@ async def process_data(
     message: Optional[Message] = None,
     type_analyze = "standard",
     question_numbers_weights:Optional[List[int]] = None,
-    division:int = None
+    division = None
 ) -> Tuple[str, str]:
     """
     Обработка данных из файла анкеты
@@ -140,7 +140,7 @@ async def process_data(
             else:
                 result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size)
 
-        if division:
+        if division is not None:
 
             data_frames_list = []
             for result in results_list:
