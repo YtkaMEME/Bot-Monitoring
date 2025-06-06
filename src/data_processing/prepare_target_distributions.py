@@ -34,8 +34,8 @@ def prepare_target_distributions(male_count, female_count,
 
     # Доли по полу
     target_pol = {
-        'Мужчина': male_count / (male_count + female_count),
-        'Женщина': female_count / (male_count + female_count)
+        'Мужской': male_count / (male_count + female_count),
+        'Женский': female_count / (male_count + female_count)
     }
 
     # Доли по возрасту
