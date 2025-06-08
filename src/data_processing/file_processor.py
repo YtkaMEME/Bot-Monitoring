@@ -131,8 +131,7 @@ def create_questions_list(df: pd.DataFrame) -> List[Question]:
 
         data_series = df.iloc[:, i]
         data = pd.DataFrame({
-            'value': data_series,
-            'weighted': 1.0  # стартовый вес
+            'value': data_series
         }, index=data_series.index)
         
         new_question = Question(name, type_q, data, id_quest)

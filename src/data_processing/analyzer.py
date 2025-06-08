@@ -1,6 +1,6 @@
 import pandas as pd
 import re
-from typing import List, Tuple, Dict, Optional, Any, Union
+from typing import List, Tuple, Dict, Optional, Union
 from .models import Question, AnalysisError, AnalysisResult
 import sys
 import os
@@ -104,7 +104,8 @@ def scale(
         question: Question,
         str_so_cool: str = "Идеально",
         str_cool: str = "Нормально",
-        str_pure: str = "Требует улучшений"
+        str_pure: str = "Требует улучшений",
+        weights = None
 ) -> Optional[Question]:
     """
     Обработка вопроса с шкалой (с учетом весов).
@@ -121,8 +122,6 @@ def scale(
     finals_dfs = []
 
     values = question.data['value'].iloc[2:]
-    weights = question.data['weighted'].iloc[2:]
-
     # Очищаем от NaN и строим таблицу
     df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
 
@@ -192,7 +191,7 @@ def scale(
     return question
 
 
-def single_selection(question: Question) -> Optional[Question]:
+def single_selection(question: Question, weights) -> Optional[Question]:
     """
     Обработка вопроса с одиночным выбором (с учетом весов).
 
@@ -205,7 +204,6 @@ def single_selection(question: Question) -> Optional[Question]:
     finals_dfs = []
 
     values = question.data['value'].iloc[2:]
-    weights = question.data['weighted'].iloc[2:]
 
     df = pd.DataFrame({'value': values, 'weight': weights})
     df = df.dropna()
@@ -232,7 +230,7 @@ def single_selection(question: Question) -> Optional[Question]:
     question.data = pd.concat(finals_dfs, ignore_index=True)
     return question
 
-def multiple_selection(question: Question, num_person) -> Optional[Question]:
+def multiple_selection(question: Question, num_person, weights) -> Optional[Question]:
     """
     Обработка вопроса с множественным выбором (с учетом весов)
 
@@ -245,7 +243,6 @@ def multiple_selection(question: Question, num_person) -> Optional[Question]:
     finals_dfs = []
 
     values = question.data['value'].iloc[2:]
-    weights = question.data['weighted'].iloc[2:]
 
     # Собираем DataFrame
     df = pd.DataFrame({'value': values, 'weight': weights})
@@ -290,7 +287,7 @@ def is_scale(dic: Dict) -> bool:
     return False
 
 
-def matrix(question: Question) -> Optional[Question]:
+def matrix(question: Question, weights) -> Optional[Question]:
     """
     Обработка вопроса с матрицей (универсальная — с учетом весов).
 
@@ -307,7 +304,6 @@ def matrix(question: Question) -> Optional[Question]:
 
     # Оставляем только фактические ответы
     values = question.data['value'].iloc[2:]
-    weights = question.data['weighted'].iloc[2:]
 
     df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
 
@@ -325,7 +321,7 @@ def matrix(question: Question) -> Optional[Question]:
 
     if df['int_value'].dropna().empty:
         # считаем это одиночным выбором
-        final_question = single_selection(question)
+        final_question = single_selection(question, weights)
     else:
         # для шкальных — заменяем value на int_value
         question.data = pd.DataFrame({
@@ -345,7 +341,7 @@ def matrix(question: Question) -> Optional[Question]:
     question.data = pd.concat(finals_dfs, ignore_index=True)
     return question
 
-def matrix_3d(question: Question) -> Optional[Question]:
+def matrix_3d(question: Question, weights) -> Optional[Question]:
     """
     Обработка вопроса с 3D матрицей (универсальная — с учетом весов)
 
@@ -363,7 +359,6 @@ def matrix_3d(question: Question) -> Optional[Question]:
 
     # Оставляем только ответы
     values = question.data['value'].iloc[2:]
-    weights = question.data['weighted'].iloc[2:]
 
     df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
 
@@ -381,7 +376,7 @@ def matrix_3d(question: Question) -> Optional[Question]:
 
     if df['int_value'].dropna().empty:
         # одиночный выбор
-        final_question = single_selection(question)
+        final_question = single_selection(question, weights)
     else:
         # шкала
         question.data = pd.DataFrame({
@@ -452,7 +447,7 @@ def free_answer(question: Question) -> Tuple[str, List[str]]:
     return result
 
 
-def nps_quest(question: Question) -> pd.DataFrame:
+def nps_quest(question: Question, weights) -> pd.DataFrame:
     """
     Обработка NPS вопроса с учетом весов.
 
@@ -469,7 +464,6 @@ def nps_quest(question: Question) -> pd.DataFrame:
     }
 
     values = question.data['value'].iloc[2:].astype(float)
-    weights = question.data['weighted'].iloc[2:].astype(float)
 
     # Проверка какой тип шкалы (5-бальная или 10-бальная)
     max_value = values.max()
@@ -506,7 +500,7 @@ def nps_quest(question: Question) -> pd.DataFrame:
 
     return pd.DataFrame(nps_df)
 
-def csi_quest(question: Question) -> float:
+def csi_quest(question: Question, weights) -> float:
     """
     Обработка CSI вопроса с учетом весов.
 
@@ -517,7 +511,6 @@ def csi_quest(question: Question) -> float:
         Средневзвешенное значение ответов
     """
     values = question.data['value'].iloc[2:].astype(float)
-    weights = question.data['weighted'].iloc[2:].astype(float)
 
     weighted_sum = (values * weights).sum()
     total_weight = weights.sum()
@@ -577,7 +570,8 @@ def analyze_questions(
         mood: Optional[int] = None,
         nps: Optional[int] = None,
         csi: Optional[List[int]] = None,
-        num_person: int = 1
+        num_person: int = 1,
+        weights = None
 ) -> AnalysisResult:
     """
     Анализ вопросов из анкеты
@@ -620,7 +614,7 @@ def analyze_questions(
                     f"\nОшибка произошла при обработке вопроса номер {question.id}")
                 raise error_nps
 
-            result.nps_frame = nps_quest(question)
+            result.nps_frame = nps_quest(question, weights)
             continue
 
         # Обработка CSI вопросов
@@ -634,9 +628,9 @@ def analyze_questions(
             criterion = question.data['value'].iloc[0]
 
             if criterion in csi_pre:
-                csi_pre[criterion].append(csi_quest(question))
+                csi_pre[criterion].append(csi_quest(question, weights))
             else:
-                csi_pre[criterion] = [csi_quest(question)]
+                csi_pre[criterion] = [csi_quest(question, weights)]
             continue
 
         # Обработка шкалы
@@ -644,7 +638,7 @@ def analyze_questions(
             if mood and mood == question.id:
                 final_question = scale(question, "Отличное", "Хорошее", "Плохое")
             else:
-                final_question = scale(question)
+                final_question = scale(question, weights)
 
             if final_question is not None:
                 result.data_frames.append(final_question.data)
@@ -652,7 +646,7 @@ def analyze_questions(
 
         # Обработка одиночного выбора
         elif question.type == "Одиночный выбор":
-            final_question = single_selection(question)
+            final_question = single_selection(question, weights)
 
             if final_question is not None:
                 result.data_frames.append(final_question.data)
@@ -660,7 +654,7 @@ def analyze_questions(
 
         # Обработка матрицы
         elif question.type == "Матрица":
-            final_question = matrix(question)
+            final_question = matrix(question, weights)
 
             if final_question is not None:
                 result.data_frames.append(final_question.data)
@@ -668,7 +662,7 @@ def analyze_questions(
 
         # Обработка 3D матрицы
         elif question.type == "Матрица 3D":
-            final_question = matrix_3d(question)
+            final_question = matrix_3d(question, weights)
 
             if final_question is not None:
                 result.data_frames.append(final_question.data)
@@ -695,7 +689,7 @@ def analyze_questions(
         # Обработка множественного выбора
         elif (question.type == "Множественный выбор" or question.type == "Выпадающий список"
               or question.type == "Выбор области" or question.type == "Множественный выпадающий список"):
-            final_question = multiple_selection(question, num_person)
+            final_question = multiple_selection(question, num_person, weights)
 
             if final_question is not None:
                 result.data_frames.append(final_question.data)

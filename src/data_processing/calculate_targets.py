@@ -67,11 +67,10 @@ def fetch_form_data():
     return men_count, women_count, art_school_labels, art_school_distribution, age_group_labels, age_group_distribution
 
 # Основная функция взвешивания (та же что у тебя была)
-def calculate_weights_from_questions(
+def calculate_raw_weights_from_questions(
         questions: List[Question],
         question_numbers: List[int],
-        targets: List[Dict[str, float]],
-        target_sample_size
+        targets: List[Dict[str, float]]
 ):
     question_map = {int(q.id.split("_")[1]): q for q in questions}
     selected_questions = [question_map[num] for num in question_numbers]
@@ -102,14 +101,10 @@ def calculate_weights_from_questions(
 
     weights_df = df.copy()
     weights_df['Вес'] = pd.to_numeric(weights_df['Вес'], errors='coerce').fillna(0).astype(float)
-    scale = target_sample_size / weights_df['Вес'].sum()
-    weights_series= weights_df['Вес'] * scale
 
     shifted_weights = pd.concat([
-        pd.Series([0.0]),  # либо NaN — зависит что тебе лучше
-        weights_series
+        pd.Series([0.0]),
+        weights_df['Вес']
     ], ignore_index=True)
 
-    for q in questions:
-        q.data["weighted"] = shifted_weights
-    return questions
+    return shifted_weights

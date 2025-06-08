@@ -4,15 +4,14 @@ from typing import Tuple, Optional, List, Any
 import pandas as pd
 from aiogram.types import Message
 
-from .calculate_targets import fetch_form_data, save_calculation_results, \
-    calculate_weights_from_questions
+from .calculate_targets import fetch_form_data, save_calculation_results,   calculate_raw_weights_from_questions
 from .file_processor import read_file, table_validation, create_questions_list
 from .analyzer import analyze_questions
 from .models import AnalysisError, Question, AnalysisResult
 from .prepare_target_distributions import prepare_target_distributions
 
 
-def division_df(questions_list, division):
+def division_df(questions_list, division, weights):
     division = f"D1_{division}"
     for q in questions_list:
         if q.id == division:
@@ -26,17 +25,23 @@ def division_df(questions_list, division):
         index_dict[value].append(idx)
 
     result = {}
+    weights_result = {}
     for value, indices in index_dict.items():
         filtered_questions = []
         for question in questions_list:
             # Получаем данные по нужным индексам
             filtered_data = question.data.loc[indices]
+            filtered_weights = weights.loc[indices]
 
             # Добавляем первые 2 записи (если они есть)
             first_two = question.data.iloc[:2]
 
             # Объединяем и удаляем возможные дубли (если индексы пересекаются)
             new_data = pd.concat([first_two, filtered_data])
+            new_data = new_data.reset_index(drop=True)
+
+            filtered_weights = pd.concat([weights.iloc[:2], filtered_weights])
+            filtered_weights = filtered_weights.reset_index(drop=True)
 
             # Пересоздаем объект Question со срезанными данными
             new_question = Question(
@@ -49,8 +54,34 @@ def division_df(questions_list, division):
             filtered_questions.append(new_question)
 
         result[value] = filtered_questions
+        weights_result[value] = filtered_weights
 
-    return result
+    return result, weights_result
+
+def normalize_weights(
+        target_sample_size: float,
+        weights
+):
+    """
+    Нормализация уже рассчитанных весов под новое значение выборки
+
+    Args:
+        questions: список объектов Question, содержащих колонку "weighted"
+        target_sample_size: размер выборки, под который нужно нормализовать
+
+    Returns:
+        Новый список вопросов с нормализованными весами
+    """
+
+    total_weight = weights.sum()
+    if total_weight == 0:
+        scale = 1.0
+    else:
+        scale = target_sample_size / total_weight
+
+    shifted_weights = weights * scale
+
+    return shifted_weights
 
 async def process_data(
     path: str,
@@ -86,6 +117,11 @@ async def process_data(
     # Создание списка вопросов
     questions_list = create_questions_list(df)
 
+    target_pol, target_age, target_art, sample_size = None, None, None, None
+
+    length = len(questions_list[0].data)
+    weights = pd.DataFrame({'ones': [1] * length})
+
     if type_analyze == "weighted":
         (male_count, female_count, art_school_labels, art_school_distribution,
          age_group_labels, age_group_distribution) = fetch_form_data()
@@ -102,8 +138,8 @@ async def process_data(
             art_school_distribution, art_school_labels,
             confidence_level, p, E)
         save_calculation_results(sample_size, target_pol, target_age, target_art)
-        questions_list = calculate_weights_from_questions(questions_list, question_numbers_weights,
-                                                      [target_pol, target_age, target_art], sample_size)
+        weights = calculate_raw_weights_from_questions(questions_list, question_numbers_weights,
+                                                      [target_pol, target_age, target_art])
 
     first_question = questions_list[0]
     total_rows = len(first_question.data)
@@ -112,14 +148,29 @@ async def process_data(
     results_list = []
     try:
         if division is not None:
-            dict_division = division_df(questions_list, division)
+            dict_division, dict_weights  = division_df(questions_list, division, weights)
             for key in dict_division:
                 questions_list = dict_division[key]
+                weights = dict_weights[key]
+
                 # Анализ вопросов
                 if type_analyze == "standard":
-                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons)
+                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights)
                 else:
-                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size)
+                    target_division = None
+                    if division in question_numbers_weights:
+                        if division == question_numbers_weights[0]:
+                            target_division = target_pol
+                        elif division == question_numbers_weights[1]:
+                            target_division = target_age
+                        else:
+                            target_division = target_art
+
+                        sample_size_targer = target_division[key]*sample_size
+
+                        weights = normalize_weights(sample_size_targer, weights)
+
+                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, target_division[key]*sample_size, weights)
 
                 for df in result.data_frames:
                     df["Разделитель"] = key
@@ -136,9 +187,10 @@ async def process_data(
                 results_list.append(result)
         else:
             if type_analyze == "standard":
-                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons)
+                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights)
             else:
-                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size)
+                weights = normalize_weights(sample_size, weights)
+                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights)
 
         if division is not None:
 
@@ -180,14 +232,13 @@ async def process_data(
             result = result2
 
         # Сохранение результатов
-
         if division is not None:
             result.to_excel_division(excel_path)
-            result.to_csv(csv_path)
         else:
             result.to_excel(excel_path)
-            result.to_csv(csv_path)
-        
+
+        result.to_csv(csv_path)
+
         # Отправка сообщения о пропущенных вопросах
         if message and result.skipped_questions:
             await message.answer(f"Были пропущены следующие вопросы{result.skipped_questions}")
