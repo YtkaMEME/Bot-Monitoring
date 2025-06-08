@@ -101,10 +101,10 @@ def calculate_raw_weights_from_questions(
 
     weights_df = df.copy()
     weights_df['Вес'] = pd.to_numeric(weights_df['Вес'], errors='coerce').fillna(0).astype(float)
-
     shifted_weights = pd.concat([
-        pd.Series([0.0]),
-        weights_df['Вес']
+        pd.Series([0.0], name='ones'),
+        weights_df['Вес'].rename('ones')
     ], ignore_index=True)
 
-    return shifted_weights
+    shifted_weights_df = shifted_weights.to_frame(name='ones')
+    return shifted_weights_df

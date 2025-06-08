@@ -121,7 +121,8 @@ def scale(
     """
     finals_dfs = []
 
-    values = question.data['value'].iloc[2:]
+    values = question.data['value'].iloc[2:].reset_index(drop=True)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
     # Очищаем от NaN и строим таблицу
     df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
 
@@ -203,10 +204,10 @@ def single_selection(question: Question, weights) -> Optional[Question]:
     """
     finals_dfs = []
 
-    values = question.data['value'].iloc[2:]
+    values = question.data['value'].iloc[2:].reset_index(drop=True)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
 
-    df = pd.DataFrame({'value': values, 'weight': weights})
-    df = df.dropna()
+    df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
 
     # Группировка с учетом весов
     grouped = df.groupby('value')['weight'].sum().to_dict()
@@ -242,7 +243,9 @@ def multiple_selection(question: Question, num_person, weights) -> Optional[Ques
     """
     finals_dfs = []
 
-    values = question.data['value'].iloc[2:]
+    values = question.data['value'].iloc[2:].reset_index(drop=True)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
+
 
     # Собираем DataFrame
     df = pd.DataFrame({'value': values, 'weight': weights})
@@ -303,7 +306,8 @@ def matrix(question: Question, weights) -> Optional[Question]:
     matrix_scale = question.data['value'].iloc[0]
 
     # Оставляем только фактические ответы
-    values = question.data['value'].iloc[2:]
+    values = question.data['value'].iloc[2:].reset_index(drop=True)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
 
     df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
 
@@ -358,9 +362,8 @@ def matrix_3d(question: Question, weights) -> Optional[Question]:
     matrix_scale = question.data['value'].iloc[1]
 
     # Оставляем только ответы
-    values = question.data['value'].iloc[2:]
-
-    df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
+    values = question.data['value'].iloc[2:].reset_index(drop=True)
+    df = pd.DataFrame({'value': values}).dropna()
 
     if df.empty:
         return None
@@ -376,14 +379,12 @@ def matrix_3d(question: Question, weights) -> Optional[Question]:
 
     if df['int_value'].dropna().empty:
         # одиночный выбор
-        final_question = single_selection(question, weights)
+        final_question = single_selection(question, weights=weights)
     else:
         # шкала
         question.data = pd.DataFrame({
-            'value': df['int_value'],
-            'weighted': df['weight']
-        })
-        final_question = scale(question)
+            'value': df['int_value']})
+        final_question = scale(question, weights=weights)
 
     if final_question is None:
         return None
@@ -463,7 +464,9 @@ def nps_quest(question: Question, weights) -> pd.DataFrame:
         "Процент": []
     }
 
-    values = question.data['value'].iloc[2:].astype(float)
+    values = question.data['value'].iloc[2:].astype(float).reset_index(drop=True)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
+
 
     # Проверка какой тип шкалы (5-бальная или 10-бальная)
     max_value = values.max()
@@ -510,7 +513,9 @@ def csi_quest(question: Question, weights) -> float:
     Returns:
         Средневзвешенное значение ответов
     """
-    values = question.data['value'].iloc[2:].astype(float)
+    values = question.data['value'].iloc[2:].astype(float).reset_index(drop=True)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
+
 
     weighted_sum = (values * weights).sum()
     total_weight = weights.sum()
@@ -636,7 +641,7 @@ def analyze_questions(
         # Обработка шкалы
         if question.type == "Шкала":
             if mood and mood == question.id:
-                final_question = scale(question, "Отличное", "Хорошее", "Плохое")
+                final_question = scale(question, "Отличное", "Хорошее", "Плохое", weights)
             else:
                 final_question = scale(question, weights)
 

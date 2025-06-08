@@ -72,7 +72,7 @@ def normalize_weights(
     Returns:
         Новый список вопросов с нормализованными весами
     """
-
+    weights =  weights["ones"]
     total_weight = weights.sum()
     if total_weight == 0:
         scale = 1.0
@@ -80,8 +80,9 @@ def normalize_weights(
         scale = target_sample_size / total_weight
 
     shifted_weights = weights * scale
+    shifted_weights_df = shifted_weights.to_frame(name='ones')
 
-    return shifted_weights
+    return shifted_weights_df
 
 async def process_data(
     path: str,
