@@ -120,7 +120,6 @@ def scale(
         Обработанный вопрос или None если нет данных
     """
     finals_dfs = []
-
     values = question.data['value'].iloc[2:].reset_index(drop=True)
     weights = weights['ones'].iloc[2:].reset_index(drop=True)
     # Очищаем от NaN и строим таблицу
@@ -307,9 +306,8 @@ def matrix(question: Question, weights) -> Optional[Question]:
 
     # Оставляем только фактические ответы
     values = question.data['value'].iloc[2:].reset_index(drop=True)
-    weights = weights['ones'].iloc[2:].reset_index(drop=True)
-
-    df = pd.DataFrame({'value': values, 'weight': weights}).dropna()
+    weights_copy = weights['ones'].iloc[2:].reset_index(drop=True)
+    df = pd.DataFrame({'value': values, 'weight': weights_copy}).dropna()
 
     if df.empty:
         return None
@@ -332,7 +330,8 @@ def matrix(question: Question, weights) -> Optional[Question]:
             'value': df['int_value'],
             'weighted': df['weight']
         })
-        final_question = scale(question)
+
+        final_question = scale(question, weights=weights)
 
     if final_question is None:
         return None
@@ -643,7 +642,7 @@ def analyze_questions(
             if mood and mood == question.id:
                 final_question = scale(question, "Отличное", "Хорошее", "Плохое", weights)
             else:
-                final_question = scale(question, weights)
+                final_question = scale(question, weights=weights)
 
             if final_question is not None:
                 result.data_frames.append(final_question.data)
