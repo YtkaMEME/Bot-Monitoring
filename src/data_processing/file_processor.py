@@ -129,7 +129,7 @@ def create_questions_list(df: pd.DataFrame) -> List[Question]:
             
         df.columns.values[i] = name
 
-        data_series = df.iloc[:, i]
+        data_series = df.iloc[:, i].reset_index(drop=True)
         data = pd.DataFrame({
             'value': data_series
         }, index=data_series.index)
