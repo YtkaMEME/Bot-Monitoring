@@ -58,31 +58,30 @@ def division_df(questions_list, division, weights):
 
     return result, weights_result
 
-def normalize_weights(
-        target_sample_size: float,
-        weights
-):
-    """
-    Нормализация уже рассчитанных весов под новое значение выборки
-
-    Args:
-        questions: список объектов Question, содержащих колонку "weighted"
-        target_sample_size: размер выборки, под который нужно нормализовать
-
-    Returns:
-        Новый список вопросов с нормализованными весами
-    """
-    weights =  weights["ones"]
-    total_weight = weights.sum()
-    if total_weight == 0:
-        scale = 1.0
-    else:
-        scale = target_sample_size / total_weight
-
-    shifted_weights = weights * scale
-    shifted_weights_df = shifted_weights.to_frame(name='ones')
-
-    return shifted_weights_df
+# def normalize_weights(
+#         target_sample_size: float,
+#         weights
+# ):
+#     """
+#     Нормализация уже рассчитанных весов под новое значение выборки
+#
+#     Args:
+#         questions: список объектов Question, содержащих колонку "weighted"
+#         target_sample_size: размер выборки, под который нужно нормализовать
+#
+#     Returns:
+#         Новый список вопросов с нормализованными весами
+#     """
+    # weights =  weights["ones"]
+    # total_weight = weights.sum()
+    # if total_weight == 0:
+    #     scale = 1.0
+    # else:
+    #     scale = target_sample_size / total_weight
+    #
+    # shifted_weights = weights * scale
+    # shifted_weights_df = shifted_weights.to_frame(name='ones')
+    #return weights
 
 async def process_data(
     path: str,
@@ -140,7 +139,7 @@ async def process_data(
             confidence_level, p, E)
         save_calculation_results(sample_size, target_pol, target_age, target_art)
         weights = calculate_raw_weights_from_questions(questions_list, question_numbers_weights,
-                                                      [target_pol, target_age, target_art])
+                                                      [target_pol, target_age, target_art], sample_size- 1)
 
     first_question = questions_list[0]
     total_rows = len(first_question.data)
@@ -167,9 +166,6 @@ async def process_data(
                         else:
                             target_division = target_art
 
-                        sample_size_targer = target_division[key]*sample_size
-
-                        weights = normalize_weights(sample_size_targer, weights)
 
                     result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, target_division[key]*sample_size, weights)
 
@@ -190,7 +186,6 @@ async def process_data(
             if type_analyze == "standard":
                 result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights)
             else:
-                weights = normalize_weights(sample_size, weights)
                 result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights)
 
         if division is not None:
