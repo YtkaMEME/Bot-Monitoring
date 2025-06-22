@@ -116,8 +116,6 @@ def fetch_form_data():
 
     return men_count, women_count, art_school_labels, art_school_distribution, age_group_labels, age_group_distribution
 
-
-
 def count_matches_against_targets(question_dfs: List[Question], target_distributions: List[Dict[str, float]]) -> \
 List[Dict[str, int]]:
     """
@@ -152,6 +150,7 @@ def calculate_raw_weights_from_questions(
     real_count = count_matches_against_targets(questions, targets)
     question_map = {int(q.id.split("_")[1]): q for q in questions}
     selected_questions = [question_map[num] for num in question_numbers]
+    
     df = pd.DataFrame({'ID_ответа': selected_questions[0].data.index})
 
     for idx, q in enumerate(selected_questions):

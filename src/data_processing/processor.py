@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Tuple, Optional, List, Any
 
 import pandas as pd
@@ -18,7 +19,6 @@ def division_df(questions_list, division, weights):
             division_question = q.data["value"].iloc[2:]
             break
     index_dict = {}
-
     for idx, value in division_question.items():
         if value not in index_dict:
             index_dict[value] = []
@@ -58,30 +58,30 @@ def division_df(questions_list, division, weights):
 
     return result, weights_result
 
-# def normalize_weights(
-#         target_sample_size: float,
-#         weights
-# ):
-#     """
-#     Нормализация уже рассчитанных весов под новое значение выборки
-#
-#     Args:
-#         questions: список объектов Question, содержащих колонку "weighted"
-#         target_sample_size: размер выборки, под который нужно нормализовать
-#
-#     Returns:
-#         Новый список вопросов с нормализованными весами
-#     """
-    # weights =  weights["ones"]
-    # total_weight = weights.sum()
-    # if total_weight == 0:
-    #     scale = 1.0
-    # else:
-    #     scale = target_sample_size / total_weight
-    #
-    # shifted_weights = weights * scale
-    # shifted_weights_df = shifted_weights.to_frame(name='ones')
-    #return weights
+def clean_text(text: str) -> str:
+    if pd.isna(text):
+        return ''
+    # Приведение к нижнему регистру
+    text = text.lower()
+    # Удаление знаков препинания (оставляем только буквы, цифры и пробелы)
+    text = re.sub(r'[^\w\s]', '', text)
+    # Замена множественных пробелов на один
+    text = re.sub(r'\s+', ' ', text)
+    # Удаление пробелов в начале и конце строки
+    return text.strip()
+
+def clean_key(key: str) -> str:
+    # Приводим к нижнему регистру
+    key = key.lower()
+    # Удаляем всё, кроме букв, цифр и пробелов
+    key = re.sub(r'[^\w\s]', '', key)
+    # Заменяем множественные пробелы на один
+    key = re.sub(r'\s+', ' ', key)
+    # Удаляем пробелы в начале и конце строки
+    return key.strip()
+
+def clean_dict_keys(data: dict) -> dict:
+    return {clean_key(k): v for k, v in data.items()}
 
 async def process_data(
     path: str,
@@ -138,8 +138,45 @@ async def process_data(
             art_school_distribution, art_school_labels,
             confidence_level, p, E)
         save_calculation_results(sample_size, target_pol, target_age, target_art)
+
+        # Сохраняем оригинальные версии
+        original_target_pol = target_pol.copy()
+        original_target_age = target_age.copy()
+        original_target_art = target_art.copy()
+
+        original_data_columns = {}  # сохраняем оригинальные данные по вопросам
+
+        for q in questions_list:
+            number_q = int(q.id.split("_")[1])
+            if number_q in question_numbers_weights:
+                col_name = q.data.columns[0]
+                original_data_columns[q.id] = q.data[col_name].copy()  # копируем Series
+                q.data[col_name] = q.data[col_name].astype(str).apply(clean_text)
+
+        # Применяем очистку
+        target_pol = clean_dict_keys(target_pol)
+        target_age = clean_dict_keys(target_age)
+        target_art = clean_dict_keys(target_art)
+
+        for q in questions_list:
+            number_q = int(q.id.split("_")[1])
+            if number_q in question_numbers_weights:
+                col_name = q.data.columns[0]
+                q.data[col_name] = q.data[col_name].astype(str).apply(clean_text)
+
         weights = calculate_raw_weights_from_questions(questions_list, question_numbers_weights,
                                                       [target_pol, target_age, target_art], sample_size- 1)
+        
+        # Восстанавливаем target словари
+        target_pol = original_target_pol.copy()
+        target_age = original_target_age.copy()
+        target_art = original_target_art.copy()
+
+        # Восстанавливаем данные вопросов
+        for q in questions_list:
+            if q.id in original_data_columns:
+                col_name = q.data.columns[0]
+                q.data[col_name] = original_data_columns[q.id].copy()
 
     first_question = questions_list[0]
     total_rows = len(first_question.data)
