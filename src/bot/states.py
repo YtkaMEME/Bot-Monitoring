@@ -20,6 +20,10 @@ class MainState(StatesGroup):
     art_school = State()
     division = State()
     division_number = State()
+    tr = State()
+    tr_number = State()
+    roti = State()
+    roti_number = State()
     
 
 class AdminState(StatesGroup):

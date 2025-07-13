@@ -91,7 +91,9 @@ async def process_data(
     message: Optional[Message] = None,
     type_analyze = "standard",
     question_numbers_weights:Optional[List[int]] = None,
-    division = None
+    division = None,
+    tr_number: Optional[int] = None,
+    roti_number: Optional[int] = None
 ) -> Tuple[str, str]:
     """
     Обработка данных из файла анкеты
@@ -137,6 +139,7 @@ async def process_data(
             age_group_distribution, age_group_labels,
             art_school_distribution, art_school_labels,
             confidence_level, p, E)
+        
         save_calculation_results(sample_size, target_pol, target_age, target_art)
 
         # Сохраняем оригинальные версии
@@ -192,7 +195,7 @@ async def process_data(
 
                 # Анализ вопросов
                 if type_analyze == "standard":
-                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights)
+                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights, tr_number, roti_number)
                 else:
                     target_division = None
                     if division in question_numbers_weights:
@@ -202,9 +205,10 @@ async def process_data(
                             target_division = target_age
                         else:
                             target_division = target_art
+                        result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, target_division[key]*sample_size, weights, tr_number, roti_number)
+                    else:
+                        result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights, tr_number, roti_number)
 
-
-                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, target_division[key]*sample_size, weights)
 
                 for df in result.data_frames:
                     df["Разделитель"] = key
@@ -221,9 +225,9 @@ async def process_data(
                 results_list.append(result)
         else:
             if type_analyze == "standard":
-                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights)
+                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights, tr_number, roti_number)
             else:
-                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights)
+                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights, tr_number, roti_number)
 
         if division is not None:
 
@@ -243,12 +247,16 @@ async def process_data(
                                  result.free_answers_frame is not None]
             csi_list = [result.csi_frame for result in results_list if result.csi_frame is not None]
             nps_list = [result.nps_frame for result in results_list if result.nps_frame is not None]
+            tr_list = [result.tr_frame for result in results_list if result.tr_frame is not None]
+            roti_list = [result.roti_frame for result in results_list if result.roti_frame is not None]
 
             # объединяем каждый блок
             merged_data_frames = data_frames_list
             merged_free_answers = pd.concat(free_answers_list, ignore_index=True)
             merged_csi = pd.concat(csi_list, ignore_index=True)
             merged_nps = pd.concat(nps_list, ignore_index=True)
+            merged_tr = pd.concat(tr_list, ignore_index=True)
+            merged_roti = pd.concat(roti_list, ignore_index=True)
 
             result2 = AnalysisResult()
 
@@ -261,6 +269,10 @@ async def process_data(
                 result2.csi_frame = merged_csi
             if nps_number:
                 result2.nps_frame = merged_nps
+            if tr_number:
+                result2.tr_frame = merged_tr
+            if roti_number:
+                result2.roti_frame = merged_roti
 
             result = result2
 

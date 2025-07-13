@@ -33,6 +33,8 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
     mood = user_data.get("mood_number")
     nps = user_data.get("nps_number")
     csi = user_data.get("csi_number")
+    tr = user_data.get("tr")
+    roti = user_data.get("roti")
     analyze_type = user_data["analyze_type"]
     question_numbers_weights = None
     if analyze_type == "weighted":
@@ -52,7 +54,7 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
     excel_path, csv_path = await process_data(path, mood, nps, csi,
                                               message,
                                               analyze_type,
-                                              question_numbers_weights, division)
+                                              question_numbers_weights, division, tr, roti)
 
     # Удаляем исходный файл
     if os.path.exists(path):
@@ -155,6 +157,8 @@ async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext)
 @router.message(MainState.nps, F.text == "Да")
 @router.message(MainState.csi, F.text == "Да")
 @router.message(MainState.division, F.text == "Да")
+@router.message(MainState.tr, F.text == "Да")
+@router.message(MainState.roti, F.text == "Да")
 async def yes_quest(message: Message, state: FSMContext):
     """Обработчик ответа 'Да' на вопросы о наличии специальных вопросов"""
     current_state = await state.get_state()
@@ -171,12 +175,18 @@ async def yes_quest(message: Message, state: FSMContext):
         await state.set_state(MainState.mood_number)
     elif current_state == MainState.division:
         await state.set_state(MainState.division_number)
+    elif current_state == MainState.tr:
+        await state.set_state(MainState.tr_number)
+    elif current_state == MainState.roti:
+        await state.set_state(MainState.roti_number)
 
 
 @router.message(MainState.mood, F.text == "Нет")
 @router.message(MainState.nps, F.text == "Нет")
 @router.message(MainState.csi, F.text == "Нет")
 @router.message(MainState.division, F.text == "Нет")
+@router.message(MainState.tr, F.text == "Нет")
+@router.message(MainState.roti, F.text == "Нет")
 async def no_quest(message: Message, state: FSMContext):
     """Обработчик ответа 'Нет' на вопросы о наличии специальных вопросов"""
     current_state = await state.get_state()
@@ -199,17 +209,21 @@ async def no_quest(message: Message, state: FSMContext):
                 os.remove(csv_path)
         except Exception as e:
             await message.answer(f"Произошла ошибка при обработке данных: {e}")
-
     elif current_state == MainState.nps:
         await state.set_state(MainState.csi)
         await message.answer("Присутствуют ли CSI вопросы?", reply_markup=keyboard)
-
     elif current_state == MainState.mood:
-        await state.set_state(MainState.nps)
-        await message.answer("Присутствует ли NPS вопрос?", reply_markup=keyboard)
+        await state.set_state(MainState.tr)
+        await message.answer("Присутствует ли TR вопрос?", reply_markup=keyboard)
     elif current_state == MainState.division:
         await state.set_state(MainState.mood)
         await message.answer("Присутствует вопрос про настроение?", reply_markup=keyboard)
+    elif current_state == MainState.tr:
+        await state.set_state(MainState.roti)
+        await message.answer("Присутствует ли ROTI вопрос?", reply_markup=keyboard)
+    elif current_state == MainState.roti:
+        await state.set_state(MainState.nps)
+        await message.answer("Присутствует ли NPS вопрос?", reply_markup=keyboard)
 
 
 @router.message(MainState.num_person)
@@ -220,6 +234,8 @@ async def no_quest(message: Message, state: FSMContext):
 @router.message(MainState.age)
 @router.message(MainState.art_school)
 @router.message(MainState.division_number)
+@router.message(MainState.tr_number)
+@router.message(MainState.roti_number)
 async def handle_number(message: Message, state: FSMContext):
     """Обработчик ввода числовых значений"""
     if not message.text.isdigit():
@@ -246,8 +262,18 @@ async def handle_number(message: Message, state: FSMContext):
 
     elif current_state == MainState.mood_number:
         await state.update_data(mood_number=number)
+        await state.set_state(MainState.tr)
+        await message.answer("Присутствует ли TR вопрос?", reply_markup=keyboard)
+    
+    elif current_state == MainState.tr_number:
+        await state.update_data(tr=number)
+        await state.set_state(MainState.roti)
+        await message.answer("Присутствует ли ROTI вопрос?", reply_markup=keyboard)
+    
+    elif current_state == MainState.roti_number:
+        await state.update_data(roti=number)
         await state.set_state(MainState.nps)
-        await message.answer("Присутствуют ли NPS вопросы?", reply_markup=keyboard)
+        await message.answer("Присутствует ли NPS вопрос?", reply_markup=keyboard)
 
     elif current_state == MainState.nps_number:
         await state.update_data(nps_number=number)

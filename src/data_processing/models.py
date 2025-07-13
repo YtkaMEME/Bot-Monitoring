@@ -37,6 +37,8 @@ class AnalysisResult:
         self.data_frames: List[pd.DataFrame] = []
         self.nps_frame: pd.DataFrame = pd.DataFrame()
         self.csi_frame: pd.DataFrame = pd.DataFrame()
+        self.tr_frame: pd.DataFrame = pd.DataFrame()
+        self.roti_frame: pd.DataFrame = pd.DataFrame()
         self.free_answers_frame: pd.DataFrame = pd.DataFrame()
         self.skipped_questions: str = ""
         
@@ -100,6 +102,31 @@ class AnalysisResult:
                         if cell.value is not None and isinstance(cell.value, (int, float)):
                             cell.number_format = '0.00%'
         
+        # Добавляем TR если есть
+        if not self.tr_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.tr_frame.to_excel(writer, sheet_name='TR', index=False)
+
+                workbook = writer.book
+                worksheet = workbook['TR']
+                for cell in worksheet['C']:  # колонка "Процент"
+                    if cell.row > 1:
+                        if cell.value is not None and isinstance(cell.value, (int, float)):
+                            cell.number_format = '0.00%'
+
+        # Добавляем ROTI если есть
+        if not self.roti_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.roti_frame.to_excel(writer, sheet_name='ROTI', index=False)
+                workbook = writer.book
+                worksheet = workbook['ROTI']
+                for cell in worksheet['C']:  # колонка "Процент"
+                        if cell.row > 1:
+                            if cell.value is not None and isinstance(cell.value, (int, float)):
+                                # Только для строк с оценками от 1 до 5 — не форматируем строку со средним значением
+                                if not isinstance(cell.value, str):
+                                    cell.number_format = '0.00%'
+
         # Добавляем CSI если есть
         if not self.csi_frame.empty:
             with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
@@ -165,6 +192,31 @@ class AnalysisResult:
                     if cell.row > 1:
                         if cell.value is not None and isinstance(cell.value, (int, float)):
                             cell.number_format = '0.00%'
+
+        # Добавляем TR если есть
+        if not self.tr_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.tr_frame.to_excel(writer, sheet_name='TR', index=False)
+
+                workbook = writer.book
+                worksheet = workbook['TR']
+                for cell in worksheet['C']:  # колонка "Процент"
+                    if cell.row > 1:
+                        if cell.value is not None and isinstance(cell.value, (int, float)):
+                            cell.number_format = '0.00%'
+
+        # Добавляем ROTI если есть
+        if not self.roti_frame.empty:
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                self.roti_frame.to_excel(writer, sheet_name='ROTI', index=False)
+                workbook = writer.book
+                worksheet = workbook['ROTI']
+                for cell in worksheet['C']:  # колонка "Процент"
+                        if cell.row > 1:
+                            if cell.value is not None and isinstance(cell.value, (int, float)):
+                                # Только для строк с оценками от 1 до 5 — не форматируем строку со средним значением
+                                if not isinstance(cell.value, str):
+                                    cell.number_format = '0.00%'
 
         # Добавляем CSI если есть
         if not self.csi_frame.empty:

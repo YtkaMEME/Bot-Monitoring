@@ -446,7 +446,6 @@ def free_answer(question: Question) -> Tuple[str, List[str]]:
         result[1].append(answer)
     return result
 
-
 def nps_quest(question: Question, weights) -> pd.DataFrame:
     """
     Обработка NPS вопроса с учетом весов.
@@ -502,6 +501,93 @@ def nps_quest(question: Question, weights) -> pd.DataFrame:
 
     return pd.DataFrame(nps_df)
 
+def tr_quest(question: Union[pd.DataFrame, "Question"], weights: pd.DataFrame) -> pd.DataFrame:
+    """
+    Обработка TR (достижение цели) с учетом весов.
+
+    Args:
+        question: объект с данными вопроса (должен содержать колонку 'value')
+        weights: DataFrame с весами, колонка 'ones'
+
+    Returns:
+        DataFrame с результатами TR
+    """
+    tr_df = {
+        "Категория": ["Достигли цели", "Не достигли", "TR (%)"],
+        "Количество": [],
+        "Процент": []
+    }
+
+    values = question.data['value'].iloc[2:].reset_index(drop=True).astype(str).str.strip()
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
+
+    reached = 0
+    not_reached = 0
+
+    for val, weight in zip(values, weights):
+        if val.lower() == "да":
+            reached += weight
+        elif val.lower() == "нет":
+            not_reached += weight
+
+    total = reached + not_reached
+    tr_percent = (reached / total) if total > 0 else 0
+
+    tr_df["Количество"] = [round(reached, 2), round(not_reached, 2), ""]
+    tr_df["Процент"] = [
+        round(reached / total, 2) if total > 0 else 0,
+        round(not_reached / total, 2) if total > 0 else 0,
+        tr_percent
+    ]
+
+    return pd.DataFrame(tr_df)
+
+def roti_quest(question: Union[pd.DataFrame, "Question"], weights: pd.DataFrame) -> pd.DataFrame:
+    """
+    Расчёт ROTI (Return on Time Invested) с учётом весов.
+
+    Args:
+        question: объект с данными вопроса (с колонкой 'value')
+        weights: DataFrame с весами (с колонкой 'ones')
+
+    Returns:
+        DataFrame с частотным распределением, средним значением и ROTI
+    """
+    roti_df = {
+        "Оценка": [],
+        "Количество": [],
+        "Процент": []
+    }
+
+    values = question.data['value'].iloc[2:].reset_index(drop=True).astype(float)
+    weights = weights['ones'].iloc[2:].reset_index(drop=True)
+
+    score_counts = {i: 0 for i in range(1, 6)}
+    total_weight = 0
+    weighted_sum = 0
+
+    for val, weight in zip(values, weights):
+        val_int = int(round(val))
+        if 1 <= val_int <= 5:
+            score_counts[val_int] += weight
+            if val_int == 4 or val_int == 5:
+                weighted_sum += 1 * weight
+            total_weight += 1 * weight
+
+    for score in range(1, 6):
+        count = score_counts[score]
+        percent = (count / total_weight) if total_weight > 0 else 0
+        roti_df["Оценка"].append(str(score))
+        roti_df["Количество"].append(round(count, 2))
+        roti_df["Процент"].append(round(percent, 2))
+
+    average_score = weighted_sum / total_weight if total_weight > 0 else 0
+    roti_df["Оценка"].append("Среднее ROTI")
+    roti_df["Количество"].append("")
+    roti_df["Процент"].append(average_score)
+
+    return pd.DataFrame(roti_df)
+
 def csi_quest(question: Question, weights) -> float:
     """
     Обработка CSI вопроса с учетом весов.
@@ -524,7 +610,6 @@ def csi_quest(question: Question, weights) -> float:
 
     average = weighted_sum / total_weight
     return round(float(average), 4)
-
 
 def create_csi_df(csi_dic: Dict[str, List[float]]) -> pd.DataFrame:
     """
@@ -568,14 +653,15 @@ def create_csi_df(csi_dic: Dict[str, List[float]]) -> pd.DataFrame:
 
     return pd.DataFrame(csi_df)
 
-
 def analyze_questions(
         questions_list: List[Question],
         mood: Optional[int] = None,
         nps: Optional[int] = None,
         csi: Optional[List[int]] = None,
         num_person: int = 1,
-        weights = None
+        weights = None,
+        tr: Optional[int] = None,
+        roti: Optional[int] = None
 ) -> AnalysisResult:
     """
     Анализ вопросов из анкеты
@@ -603,6 +689,12 @@ def analyze_questions(
     if nps:
         nps = f"D1_{nps}"
 
+    if tr:
+        tr = f"D1_{tr}"
+
+    if roti:
+        roti = f"D1_{roti}"
+
     if csi:
         if len(csi) == 2:
             csi = [f"D1_{csi[0]}", f"D1_{csi[1]}"]
@@ -620,6 +712,27 @@ def analyze_questions(
 
             result.nps_frame = nps_quest(question, weights)
             continue
+
+        if tr and tr == question.id:
+            if question.type != "Одиночный выбор":
+                error_nps = AnalysisError(
+                    f"Ошибка в выборе номера вопроса TR. TR вcегда является Одиночным выбором!"
+                    f"\nОшибка произошла при обработке вопроса номер {question.id}")
+                raise error_nps
+
+            result.tr_frame = tr_quest(question, weights)
+            continue
+        
+        if roti and roti == question.id:
+            if question.type != "Шкала":
+                error_nps = AnalysisError(
+                    f"Ошибка в выборе номера вопроса ROTI. ROTI вcегда является Одиночным выбором!"
+                    f"\nОшибка произошла при обработке вопроса номер {question.id}")
+                raise error_nps
+
+            result.roti_frame = roti_quest(question, weights)
+            continue
+              
 
         # Обработка CSI вопросов
         if csi and question.id in csi:

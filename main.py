@@ -6,12 +6,12 @@ from src.bot.handlers import router
 
 
 # Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='logs/bot.log',
-    filemode='a'
-)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+#     filename='logs/bot.log',
+#     filemode='a'
+# )
 
 # # Вывод логов в консоль
 # console = logging.StreamHandler()
