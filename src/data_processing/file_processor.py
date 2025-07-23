@@ -1,6 +1,6 @@
 import pandas as pd
-from typing import List, Tuple, Optional
-from .models import Question, AnalysisError
+from typing import List
+from .models import Question
 
 
 def get_columns_to_drop(df: pd.DataFrame) -> int:

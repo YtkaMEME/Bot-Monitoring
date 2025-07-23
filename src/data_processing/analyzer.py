@@ -9,7 +9,6 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from config.config import config
 
-
 def no_repet_persent_index(list_of_persent: List[float]) -> int:
     """
     Выбор индекса для корректировки процентов
@@ -38,7 +37,6 @@ def no_repet_persent_index(list_of_persent: List[float]) -> int:
 
     return 0
 
-
 def round_persent(*args: int) -> Tuple[float, ...]:
     """
     Округление процентов с учетом их суммы в 100%
@@ -64,7 +62,6 @@ def round_persent(*args: int) -> Tuple[float, ...]:
         list_of_persent[index_no_repet_persent] += 0.01
 
     return tuple(list_of_persent)
-
 
 def create_typical_frame(
         number: str,
@@ -98,7 +95,6 @@ def create_typical_frame(
     }
 
     return pd.DataFrame(final_df)
-
 
 def scale(
         question: Question,
@@ -190,7 +186,6 @@ def scale(
     question.data = pd.concat(finals_dfs, ignore_index=True)
     return question
 
-
 def single_selection(question: Question, weights) -> Optional[Question]:
     """
     Обработка вопроса с одиночным выбором (с учетом весов).
@@ -202,7 +197,6 @@ def single_selection(question: Question, weights) -> Optional[Question]:
         Обработанный вопрос или None если нет данных
     """
     finals_dfs = []
-
     values = question.data['value'].iloc[2:].reset_index(drop=True)
     weights = weights['ones'].iloc[2:].reset_index(drop=True)
 
@@ -288,7 +282,6 @@ def is_scale(dic: Dict) -> bool:
 
     return False
 
-
 def matrix(question: Question, weights) -> Optional[Question]:
     """
     Обработка вопроса с матрицей (универсальная — с учетом весов).
@@ -300,15 +293,14 @@ def matrix(question: Question, weights) -> Optional[Question]:
         Обработанный вопрос или None если нет данных
     """
     finals_dfs = []
-
+    question_copy = question.copy()
     # Первая строка — это шкала внутри матрицы
-    matrix_scale = question.data['value'].iloc[0]
+    matrix_scale = question_copy.data['value'].iloc[0]
 
     # Оставляем только фактические ответы
-    values = question.data['value'].iloc[2:].reset_index(drop=True)
+    values = question_copy.data['value'].iloc[2:].reset_index(drop=True)
     weights_copy = weights['ones'].iloc[2:].reset_index(drop=True)
     df = pd.DataFrame({'value': values, 'weight': weights_copy}).dropna()
-
     if df.empty:
         return None
 
@@ -326,11 +318,6 @@ def matrix(question: Question, weights) -> Optional[Question]:
         final_question = single_selection(question, weights)
     else:
         # для шкальных — заменяем value на int_value
-        question.data = pd.DataFrame({
-            'value': df['int_value'],
-            'weighted': df['weight']
-        })
-
         final_question = scale(question, weights=weights)
 
     if final_question is None:
@@ -338,7 +325,6 @@ def matrix(question: Question, weights) -> Optional[Question]:
 
     final_df = final_question.data
     final_df['Шкала'] = matrix_scale
-
     finals_dfs.append(final_df)
 
     question.data = pd.concat(finals_dfs, ignore_index=True)
@@ -380,9 +366,6 @@ def matrix_3d(question: Question, weights) -> Optional[Question]:
         # одиночный выбор
         final_question = single_selection(question, weights=weights)
     else:
-        # шкала
-        question.data = pd.DataFrame({
-            'value': df['int_value']})
         final_question = scale(question, weights=weights)
 
     if final_question is None:
@@ -415,7 +398,6 @@ def capitalize_after_punctuation(text: str) -> str:
 
     pattern = re.compile(r'([.!?]\s*)(\S)')
     return pattern.sub(capitalize, text)
-
 
 def free_answer(question: Question) -> Tuple[str, List[str]]:
     """

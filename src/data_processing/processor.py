@@ -1,5 +1,4 @@
 import os
-import re
 from typing import Tuple, Optional, List, Any
 
 import pandas as pd
@@ -8,80 +7,27 @@ from aiogram.types import Message
 from .calculate_targets import fetch_form_data, save_calculation_results,   calculate_raw_weights_from_questions
 from .file_processor import read_file, table_validation, create_questions_list
 from .analyzer import analyze_questions
-from .models import AnalysisError, Question, AnalysisResult
+from .models import AnalysisError, AnalysisResult
 from .prepare_target_distributions import prepare_target_distributions
+from src.utils.cleaner import clean_dict_keys, clean_text
+from src.utils.division_df import division_df, multi_division_df, process_result_with_divider
 
+def extract_group_label(key: str, field: str) -> str:
+    """
+    Извлекает значение разделителя (например, «Женщины») из строки ключа,
+    в которой содержится подстрока вида 'Пол=Женщины | Возраст=18-25'
 
-def division_df(questions_list, division, weights):
-    division = f"D1_{division}"
-    for q in questions_list:
-        if q.id == division:
-            division_question = q.data["value"].iloc[2:]
-            break
-    index_dict = {}
-    for idx, value in division_question.items():
-        if value not in index_dict:
-            index_dict[value] = []
-        index_dict[value].append(idx)
+    Args:
+        key: строка с форматированными разделителями (например, 'Пол=Женщины | Возраст=18-25')
+        field: нужное поле (например, 'Пол')
 
-    result = {}
-    weights_result = {}
-    for value, indices in index_dict.items():
-        filtered_questions = []
-        for question in questions_list:
-            # Получаем данные по нужным индексам
-            filtered_data = question.data.loc[indices]
-            filtered_weights = weights.loc[indices]
-
-            # Добавляем первые 2 записи (если они есть)
-            first_two = question.data.iloc[:2]
-
-            # Объединяем и удаляем возможные дубли (если индексы пересекаются)
-            new_data = pd.concat([first_two, filtered_data])
-            new_data = new_data.reset_index(drop=True)
-
-            filtered_weights = pd.concat([weights.iloc[:2], filtered_weights])
-            filtered_weights = filtered_weights.reset_index(drop=True)
-
-            # Пересоздаем объект Question со срезанными данными
-            new_question = Question(
-                name=question.name,
-                type_q=question.type,
-                data=new_data,
-                id=question.id
-            )
-
-            filtered_questions.append(new_question)
-
-        result[value] = filtered_questions
-        weights_result[value] = filtered_weights
-
-    return result, weights_result
-
-def clean_text(text: str) -> str:
-    if pd.isna(text):
-        return ''
-    # Приведение к нижнему регистру
-    text = text.lower()
-    # Удаление знаков препинания (оставляем только буквы, цифры и пробелы)
-    text = re.sub(r'[^\w\s]', '', text)
-    # Замена множественных пробелов на один
-    text = re.sub(r'\s+', ' ', text)
-    # Удаление пробелов в начале и конце строки
-    return text.strip()
-
-def clean_key(key: str) -> str:
-    # Приводим к нижнему регистру
-    key = key.lower()
-    # Удаляем всё, кроме букв, цифр и пробелов
-    key = re.sub(r'[^\w\s]', '', key)
-    # Заменяем множественные пробелы на один
-    key = re.sub(r'\s+', ' ', key)
-    # Удаляем пробелы в начале и конце строки
-    return key.strip()
-
-def clean_dict_keys(data: dict) -> dict:
-    return {clean_key(k): v for k, v in data.items()}
+    Returns:
+        Значение поля (например, 'Женщины'), либо '' если не найдено
+    """
+    for part in key.split(" | "):
+        if part.startswith(f"{field}="):
+            return part.replace(f"{field}=", "")
+    return ""
 
 async def process_data(
     path: str,
@@ -185,118 +131,110 @@ async def process_data(
     total_rows = len(first_question.data)
 
     num_persons = total_rows - 2
-    results_list = []
     try:
-        if division is not None:
-            dict_division, dict_weights  = division_df(questions_list, division, weights)
-            for key in dict_division:
-                questions_list = dict_division[key]
-                weights = dict_weights[key]
+        results_list = []
 
-                # Анализ вопросов
-                if type_analyze == "standard":
-                    result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights, tr_number, roti_number)
-                else:
+        if division is not None:
+
+            # Множественное или одиночное деление
+            if len(division) == 1:
+                dict_division, dict_weights = division_df(questions_list, division[0], weights)
+
+                target_division = None
+                if type_analyze != "standard" and division[0] in question_numbers_weights:
+                    if division[0] == question_numbers_weights[0]:
+                        target_division = target_pol
+                    elif division[0] == question_numbers_weights[1]:
+                        target_division = target_age
+                    else:
+                        target_division = target_art
+                for key in dict_division:
+                    q_list = dict_division[key]
+                    w_list = dict_weights[key]
+
+                    num = (target_division[key] * sample_size) if target_division else sample_size if type_analyze != "standard" else num_persons
+
+                    result = analyze_questions(q_list, mood_number, nps_number, csi_numbers, num, w_list, tr_number, roti_number)
+                    result = process_result_with_divider(result, key)
+                    results_list.append(result)
+
+            else:
+                division_results = multi_division_df(questions_list, weights, division)
+
+                for key, (q_list, w_list) in division_results.items():
+                    # Определяем нужный target_division
                     target_division = None
-                    if division in question_numbers_weights:
-                        if division == question_numbers_weights[0]:
+                    if type_analyze != "standard" and any(d in question_numbers_weights for d in division):
+                        if division[0] == question_numbers_weights[0]:
                             target_division = target_pol
-                        elif division == question_numbers_weights[1]:
+                        elif division[0] == question_numbers_weights[1]:
                             target_division = target_age
                         else:
                             target_division = target_art
-                        result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, target_division[key]*sample_size, weights, tr_number, roti_number)
+
+                    if target_division:
+                        group_label = extract_group_label(key, division[0])
+                        num = target_division.get(group_label, 0) * sample_size
                     else:
-                        result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights, tr_number, roti_number)
+                        num = sample_size if type_analyze != "standard" else num_persons
 
+                    result = analyze_questions(q_list, mood_number, nps_number, csi_numbers, num, w_list, tr_number, roti_number)
+                    result = process_result_with_divider(result, key)
+                    results_list.append(result)
 
-                for df in result.data_frames:
-                    df["Разделитель"] = key
+            num_standart = num_persons if type_analyze == "standard" else sample_size
+            result_standart = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_standart, weights, tr_number, roti_number)
+            results_list.append(process_result_with_divider(result_standart, "Общее"))
 
-                if hasattr(result, "free_answers_frame"):
-                    result.free_answers_frame["Разделитель"] = key
-
-                if hasattr(result, "csi_frame"):
-                    result.csi_frame["Разделитель"] = key
-
-                if hasattr(result, "nps_frame"):
-                    result.nps_frame["Разделитель"] = key
-
-                results_list.append(result)
-        else:
-            if type_analyze == "standard":
-                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_persons, weights, tr_number, roti_number)
-            else:
-                result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, sample_size, weights, tr_number, roti_number)
-
-        if division is not None:
-
-            data_frames_list = []
-            for result in results_list:
-                df_block = result.data_frames
-
-                if isinstance(df_block, pd.DataFrame):
-                    data_frames_list.append(df_block)
-
-                elif isinstance(df_block, list):
-                    for df in df_block:
-                        if isinstance(df, pd.DataFrame):
-                            data_frames_list.append(df)
-
-            free_answers_list = [result.free_answers_frame for result in results_list if
-                                 result.free_answers_frame is not None]
-            csi_list = [result.csi_frame for result in results_list if result.csi_frame is not None]
-            nps_list = [result.nps_frame for result in results_list if result.nps_frame is not None]
-            tr_list = [result.tr_frame for result in results_list if result.tr_frame is not None]
-            roti_list = [result.roti_frame for result in results_list if result.roti_frame is not None]
-
-            # объединяем каждый блок
-            merged_data_frames = data_frames_list
-            merged_free_answers = pd.concat(free_answers_list, ignore_index=True)
-            merged_csi = pd.concat(csi_list, ignore_index=True)
-            merged_nps = pd.concat(nps_list, ignore_index=True)
-            merged_tr = pd.concat(tr_list, ignore_index=True)
-            merged_roti = pd.concat(roti_list, ignore_index=True)
+            # Объединение результатов
+            merged_data_frames = []
+            for r in results_list:
+                df_block = r.data_frames if isinstance(r.data_frames, list) else [r.data_frames]
+                merged_data_frames.extend(df_block)
 
             result2 = AnalysisResult()
-
             result2.data_frames = merged_data_frames
 
-            if result.free_answers_frame is not None:
-                result2.free_answers_frame = merged_free_answers
+            if any(r.free_answers_frame is not None for r in results_list):
+                result2.free_answers_frame = pd.concat(
+                    [r.free_answers_frame for r in results_list if r.free_answers_frame is not None],
+                    ignore_index=True
+                )
 
             if csi_numbers:
-                result2.csi_frame = merged_csi
+                result2.csi_frame = pd.concat([r.csi_frame for r in results_list if r.csi_frame is not None], ignore_index=True)
             if nps_number:
-                result2.nps_frame = merged_nps
+                result2.nps_frame = pd.concat([r.nps_frame for r in results_list if r.nps_frame is not None], ignore_index=True)
             if tr_number:
-                result2.tr_frame = merged_tr
+                result2.tr_frame = pd.concat([r.tr_frame for r in results_list if r.tr_frame is not None], ignore_index=True)
             if roti_number:
-                result2.roti_frame = merged_roti
+                result2.roti_frame = pd.concat([r.roti_frame for r in results_list if r.roti_frame is not None], ignore_index=True)
 
             result = result2
+        else:
+            num = num_persons if type_analyze == "standard" else sample_size
+            result = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num, weights, tr_number, roti_number)
 
-        # Сохранение результатов
+        # Сохраняем результат
         if division is not None:
             result.to_excel_division(excel_path)
         else:
             result.to_excel(excel_path)
-
         result.to_csv(csv_path)
 
-        # Отправка сообщения о пропущенных вопросах
         if message and result.skipped_questions:
             await message.answer(f"Были пропущены следующие вопросы{result.skipped_questions}")
-        
+
     except AnalysisError as e:
         if message:
             await message.answer(f"{e}")
         if os.path.exists(path):
             os.remove(path)
         raise
+
     except Exception as e:
         if message:
-            await message.answer(f"Произошла какая-то ошибка \U0001F63F\nНо ведь у меня лапки\U0001F43E")
+            await message.answer("Произошла какая-то ошибка 😿\nНо ведь у меня лапки🐾")
         if os.path.exists(path):
             os.remove(path)
         raise

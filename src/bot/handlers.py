@@ -1,19 +1,31 @@
 import os
-import json
-from aiogram import F, Router
+import re
+from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, \
     InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from .states import MainState, AdminState
-from .keyboards import get_yes_no_keyboard
+from .keyboards import build_keyboard, get_yes_no_keyboard
 from .bot_instance import bot
 from src.data_processing.processor import process_data
 from config.config import config
 from aiogram.types import CallbackQuery
-router = Router()
 
+
+router = Router()
+OPTIONS = ["Настроение", "TR", "ROTI", "NPS", "CSI"]
+
+def get_true_keys_iterator(state: dict[str, bool]):
+    true_keys = [key for key, value in state.items() if value]
+    if not true_keys:
+        yield False
+    else:
+        for key in true_keys:
+            yield key
+        while True:
+            yield False
 
 async def start_process_data(state: FSMContext, message: Message) -> tuple[str, str]:
     """
@@ -134,193 +146,211 @@ async def get_doc(message: Message, state: FSMContext):
 async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext):
     analyze_type = callback_query.data
 
-    if analyze_type == "standard":
-        await state.update_data(analyze_type="standard")
-    else:
-        await state.update_data(analyze_type="weighted")
-
     await callback_query.answer()  # убирает крутилку у кнопки
 
     # Удаляем сообщение с инлайн-клавиатурой
     await callback_query.message.delete()
 
     if analyze_type == "standard":
+        await state.update_data(analyze_type="standard")
         await state.set_state(MainState.division)
         await callback_query.message.answer("Хотите ли вы разделять выгрузку по какому либо вопросу?", reply_markup=get_yes_no_keyboard())
     else:
-        # Переходим на следующий шаг
+        await state.update_data(analyze_type="weighted")
         await state.set_state(MainState.gender)
         await callback_query.message.answer("Введите номер вопроса определяющего Пол участника",
                                             reply_markup=ReplyKeyboardRemove())
 
-@router.message(MainState.mood, F.text == "Да")
-@router.message(MainState.nps, F.text == "Да")
-@router.message(MainState.csi, F.text == "Да")
+
+# --- Обработка нажатий по чекбоксам ---
+@router.callback_query(F.data.startswith("toggle__"))
+async def callback_toggle(query: types.CallbackQuery, state: FSMContext):
+    index = int(query.data.replace("toggle__", ""))
+    option = OPTIONS[index]
+
+    # переключаем значение
+    user_data = await state.get_data()
+    user_data = user_data["checkbox_state"]
+    user_data[option] = not user_data.get(option, False)
+    
+
+    # обновляем сообщение
+    await state.update_data(checkbox_state=user_data)
+    markup = build_keyboard(user_data, OPTIONS)
+    await query.message.edit_reply_markup(reply_markup=markup)
+    await query.answer()
+
+# --- Подтверждение выбора ---
+@router.callback_query(F.data == "confirm")
+async def callback_confirm(callback_query: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    user_data = user_data["checkbox_state"]
+    current_data_iterator = get_true_keys_iterator(user_data)
+    current_data = next(current_data_iterator)
+
+    if not current_data:
+        await callback_query.message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+
+        excel_path, csv_path = await start_process_data(state, callback_query.message)
+        chat_id = callback_query.message.chat.id
+        await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
+        await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
+        await callback_query.message.delete()
+
+        # Удаляем временные файлы
+        if os.path.exists(excel_path):
+            os.remove(excel_path)
+        if os.path.exists(csv_path):
+            os.remove(csv_path)
+        return
+    
+    await state.update_data(iterator=current_data_iterator)
+    await state.set_state(MainState.checkbox_menu_numbers)        
+    await state.update_data(current_data = current_data)
+    await callback_query.message.answer(f"Введите номер вопроса {current_data}!", reply_markup=ReplyKeyboardRemove())
+    await callback_query.message.delete()
+
+
 @router.message(MainState.division, F.text == "Да")
-@router.message(MainState.tr, F.text == "Да")
-@router.message(MainState.roti, F.text == "Да")
 async def yes_quest(message: Message, state: FSMContext):
     """Обработчик ответа 'Да' на вопросы о наличии специальных вопросов"""
     current_state = await state.get_state()
-    if current_state != MainState.csi:
-        await message.answer("Введите номер вопроса!", reply_markup=ReplyKeyboardRemove())
-    else:
-        await message.answer("Введите номер вопроса первого CSI вопроса", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Введите номер/номера вопроса/вопросов!", reply_markup=ReplyKeyboardRemove())
     
-    if current_state == MainState.csi:
-        await state.set_state(MainState.csi_number)
-    elif current_state == MainState.nps:
-        await state.set_state(MainState.nps_number)
-    elif current_state == MainState.mood:
-        await state.set_state(MainState.mood_number)
-    elif current_state == MainState.division:
+    if current_state == MainState.division:
         await state.set_state(MainState.division_number)
-    elif current_state == MainState.tr:
-        await state.set_state(MainState.tr_number)
-    elif current_state == MainState.roti:
-        await state.set_state(MainState.roti_number)
 
-
-@router.message(MainState.mood, F.text == "Нет")
-@router.message(MainState.nps, F.text == "Нет")
-@router.message(MainState.csi, F.text == "Нет")
 @router.message(MainState.division, F.text == "Нет")
-@router.message(MainState.tr, F.text == "Нет")
-@router.message(MainState.roti, F.text == "Нет")
 async def no_quest(message: Message, state: FSMContext):
-    """Обработчик ответа 'Нет' на вопросы о наличии специальных вопросов"""
-    current_state = await state.get_state()
-    keyboard = get_yes_no_keyboard()
 
-    if current_state == MainState.csi:
-        await state.set_state(MainState.start_process)
-        await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
-        
-        try:
-            excel_path, csv_path = await start_process_data(state, message)
-            chat_id = message.from_user.id
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-            
-            # Удаляем временные файлы
-            if os.path.exists(excel_path):
-                os.remove(excel_path)
-            if os.path.exists(csv_path):
-                os.remove(csv_path)
-        except Exception as e:
-            await message.answer(f"Произошла ошибка при обработке данных: {e}")
-    elif current_state == MainState.nps:
-        await state.set_state(MainState.csi)
-        await message.answer("Присутствуют ли CSI вопросы?", reply_markup=keyboard)
-    elif current_state == MainState.mood:
-        await state.set_state(MainState.tr)
-        await message.answer("Присутствует ли TR вопрос?", reply_markup=keyboard)
-    elif current_state == MainState.division:
-        await state.set_state(MainState.mood)
-        await message.answer("Присутствует вопрос про настроение?", reply_markup=keyboard)
-    elif current_state == MainState.tr:
-        await state.set_state(MainState.roti)
-        await message.answer("Присутствует ли ROTI вопрос?", reply_markup=keyboard)
-    elif current_state == MainState.roti:
-        await state.set_state(MainState.nps)
-        await message.answer("Присутствует ли NPS вопрос?", reply_markup=keyboard)
+    await state.update_data(checkbox_state={opt: False for opt in OPTIONS})
+    user_data = await state.get_data()
+    user_data = user_data["checkbox_state"]
+    markup = build_keyboard(user_data, OPTIONS)
 
+    await message.answer("Выбери параметры, которые присутствуют в выгрузке:", reply_markup=markup)
+    return
 
-@router.message(MainState.num_person)
-@router.message(MainState.nps_number)
-@router.message(MainState.mood_number)
-@router.message(MainState.csi_number)
 @router.message(MainState.gender)
 @router.message(MainState.age)
 @router.message(MainState.art_school)
 @router.message(MainState.division_number)
-@router.message(MainState.tr_number)
-@router.message(MainState.roti_number)
+@router.message(MainState.checkbox_menu_numbers)
 async def handle_number(message: Message, state: FSMContext):
     """Обработчик ввода числовых значений"""
-    if not message.text.isdigit():
-        await message.answer("Вы ввели не цифру, повторите ввод!")
-        return
-
-    number = int(message.text)
-    if number == 0:
-        await message.answer('Вы ввели "0", а это неправильно, так что повторите ввод')
-        return
-
-    # Проверка на повторение номера вопроса
-    if await is_question_repeated(state, number):
-        await message.answer("Введенные вами вопросы не могут совпадать!\nПовторите ввод номера вопроса")
-        return
 
     current_state = await state.get_state()
+    division_number = [1]
+
+    if not message.text.isdigit():
+        if current_state == MainState.division_number:
+            text_message = message.text.strip()
+            division_number = [int(num) for num in re.findall(r'\d+', text_message)]
+            if not isinstance(division_number[0], int):
+                await message.answer("Вы ввели не цифру, повторите ввод!")
+        else:
+            await message.answer("Вы ввели не цифру, повторите ввод!")
+            return
+    
+    number = 1    
+
+    if not current_state == MainState.division_number:
+        number = int(message.text)
+        if number == 0 or 0 in division_number:
+            await message.answer('Вы ввели "0", а это неправильно, так что повторите ввод')
+            return
+        # Проверка на повторение номера вопроса
+        if await is_question_repeated(state, number):
+            await message.answer("Введенные вами вопросы не могут совпадать!\nПовторите ввод номера вопроса")
+            return
+    else:
+        len_division = len(division_number)
+        if len_division == 1:
+            number = int(message.text)
+            division_number = [number]
+
     keyboard = get_yes_no_keyboard()
 
-    if current_state == MainState.num_person:
-        await state.update_data(person_number=number)
-        await state.set_state(MainState.mood)
-        await message.answer("Присутствует вопрос про настроение?", reply_markup=keyboard)
-
-    elif current_state == MainState.mood_number:
-        await state.update_data(mood_number=number)
-        await state.set_state(MainState.tr)
-        await message.answer("Присутствует ли TR вопрос?", reply_markup=keyboard)
-    
-    elif current_state == MainState.tr_number:
-        await state.update_data(tr=number)
-        await state.set_state(MainState.roti)
-        await message.answer("Присутствует ли ROTI вопрос?", reply_markup=keyboard)
-    
-    elif current_state == MainState.roti_number:
-        await state.update_data(roti=number)
-        await state.set_state(MainState.nps)
-        await message.answer("Присутствует ли NPS вопрос?", reply_markup=keyboard)
-
-    elif current_state == MainState.nps_number:
-        await state.update_data(nps_number=number)
-        await state.set_state(MainState.csi)
-        await message.answer("Присутствуют ли CSI вопросы?", reply_markup=keyboard)
-
-    elif current_state == MainState.csi_number:
-        await state.update_data(csi_number=[number, number + 1])
-        await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
-
-        try:
-            excel_path, csv_path = await start_process_data(state, message)
-            chat_id = message.from_user.id
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-            
-            # Удаляем временные файлы
-            if os.path.exists(excel_path):
-                os.remove(excel_path)
-            if os.path.exists(csv_path):
-                os.remove(csv_path)
-        except Exception as e:
-            await message.answer(f"Произошла ошибка при обработке данных: {e}")
-
-    elif current_state == MainState.gender:
+    if current_state == MainState.gender:
         await state.update_data(gender=number)
         await state.set_state(MainState.age)
         await message.answer("Введите номер вопроса определяющего Возраст участника",
                              reply_markup=ReplyKeyboardRemove())
-
+        return
+    
     elif current_state == MainState.age:
         await state.update_data(age=number)
         await state.set_state(MainState.art_school)
         await message.answer("Введите номер вопроса определяющего Арт школу участника",
                              reply_markup=ReplyKeyboardRemove())
+        return
 
     elif current_state == MainState.art_school:
         await state.update_data(art_school=number)
         await state.set_state(MainState.division)
         await message.answer("Хотите ли вы разделять выгрузку по какому либо вопросу?", reply_markup=keyboard)
+        return
 
     elif current_state == MainState.division_number:
-        await state.update_data(division=number)
-        await state.set_state(MainState.mood)
-        await message.answer("Присутствует вопрос про настроение?", reply_markup=keyboard)
+        await state.update_data(division=division_number)
+        await state.set_state(MainState.checkbox_menu)
 
+        await state.update_data(checkbox_state={opt: False for opt in OPTIONS})
+        user_data = await state.get_data()
+        user_data = user_data["checkbox_state"]
+        markup = build_keyboard(user_data, OPTIONS)
 
+        await message.answer("Выбери параметры, которые присутствуют в выгрузке:", reply_markup=markup)
+        return
+    
+    data_state = await state.get_data()
+    old_current_data = data_state["current_data"]
+    current_data_iterator = data_state["iterator"]
+    current_data = next(current_data_iterator)
+    await state.update_data(current_data=current_data)
+
+    if old_current_data == "Настроение":
+        await state.update_data(mood_number=number)
+    elif old_current_data == "CSI":
+        await state.update_data(csi_number=[number, number + 1])
+        await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+
+        excel_path, csv_path = await start_process_data(state, message)
+        chat_id = message.from_user.id
+        await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
+        await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
+            
+        # Удаляем временные файлы
+        if os.path.exists(excel_path):
+            os.remove(excel_path)
+        if os.path.exists(csv_path):
+            os.remove(csv_path)
+    elif old_current_data == "NPS":
+        await state.update_data(nps_number=number)
+    elif old_current_data == "TR":
+        await state.update_data(tr=number)
+    elif old_current_data == "ROTI":
+        await state.update_data(roti=number)
+    elif not current_data:
+        await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+
+        excel_path, csv_path = await start_process_data(state, message)
+        chat_id = message.from_user.id
+        await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
+        await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
+            
+        # Удаляем временные файлы
+        if os.path.exists(excel_path):
+            os.remove(excel_path)
+        if os.path.exists(csv_path):
+            os.remove(csv_path)
+        
+        await state.clear()
+        return
+    
+    if current_data:
+        await message.answer(f"Введите номер вопроса {current_data}!", reply_markup=ReplyKeyboardRemove())
+    
 
 @router.message(Command("change_del_list"))
 async def change_list_to_del(message: Message, state: FSMContext):

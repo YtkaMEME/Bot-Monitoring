@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
+from copy import deepcopy
 
 
 class Question:
@@ -21,6 +22,16 @@ class Question:
         self.data: pd.Series = data
         self.id: str = id
 
+    def copy(self) -> 'Question':
+        """
+        Создает полную копию объекта Question.
+        """
+        return Question(
+            name=self.name,
+            type_q=self.type,
+            data=deepcopy(self.data),
+            id=self.id
+        )
 
 class AnalysisError(Exception):
     """

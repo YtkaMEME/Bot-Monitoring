@@ -1,5 +1,5 @@
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def get_yes_no_keyboard() -> ReplyKeyboardMarkup:
     """
@@ -23,6 +23,7 @@ def get_yes_no_keyboard() -> ReplyKeyboardMarkup:
 
 
 def get_admin_keyboard() -> ReplyKeyboardMarkup:
+
     """
     Создание клавиатуры для административной панели
     
@@ -40,4 +41,29 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )
-    return keyboard 
+    return keyboard
+
+def build_keyboard(user_data, OPTIONS) -> InlineKeyboardMarkup:
+    CHECK_CHAR = "✅"
+    UNCHECK_CHAR = "⬜"
+    builder = InlineKeyboardBuilder()
+    # Добавляем кнопки с чекбоксами
+    for i, opt in enumerate(OPTIONS):
+        checked = CHECK_CHAR if user_data.get(opt) else UNCHECK_CHAR
+        builder.button(
+            text=f"{checked} {opt}",
+            callback_data=f"toggle__{i}"
+        )
+
+    # Указываем: чекбоксы — по 2 в ряд
+    builder.adjust(2)
+
+    # Добавляем кнопку подтверждения на отдельной строке
+    builder.row(
+        InlineKeyboardButton(
+            text="Подтвердить",
+            callback_data="confirm"
+        )
+    )
+
+    return builder.as_markup()

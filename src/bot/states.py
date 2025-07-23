@@ -24,6 +24,8 @@ class MainState(StatesGroup):
     tr_number = State()
     roti = State()
     roti_number = State()
+    checkbox_menu = State()
+    checkbox_menu_numbers = State()
     
 
 class AdminState(StatesGroup):
