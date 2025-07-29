@@ -313,25 +313,17 @@ async def handle_number(message: Message, state: FSMContext):
         await state.update_data(mood_number=number)
     elif old_current_data == "CSI":
         await state.update_data(csi_number=[number, number + 1])
-        await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
-
-        excel_path, csv_path = await start_process_data(state, message)
-        chat_id = message.from_user.id
-        await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-        await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-            
-        # Удаляем временные файлы
-        if os.path.exists(excel_path):
-            os.remove(excel_path)
-        if os.path.exists(csv_path):
-            os.remove(csv_path)
+        
     elif old_current_data == "NPS":
         await state.update_data(nps_number=number)
     elif old_current_data == "TR":
         await state.update_data(tr=number)
     elif old_current_data == "ROTI":
         await state.update_data(roti=number)
-    elif not current_data:
+
+    if current_data:
+        await message.answer(f"Введите номер вопроса {current_data}!", reply_markup=ReplyKeyboardRemove())
+    else:
         await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
 
         excel_path, csv_path = await start_process_data(state, message)
@@ -344,12 +336,9 @@ async def handle_number(message: Message, state: FSMContext):
             os.remove(excel_path)
         if os.path.exists(csv_path):
             os.remove(csv_path)
-        
         await state.clear()
         return
-    
-    if current_data:
-        await message.answer(f"Введите номер вопроса {current_data}!", reply_markup=ReplyKeyboardRemove())
+
     
 
 @router.message(Command("change_del_list"))
