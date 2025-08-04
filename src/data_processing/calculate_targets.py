@@ -59,8 +59,8 @@ def rake_weights(
     return df
 
 def save_calculation_results(sample_size, target_pol, target_age, target_art):
-    # DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
-    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
+    DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
+    # DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -90,8 +90,8 @@ def save_calculation_results(sample_size, target_pol, target_age, target_art):
 
 # Подключение к базе и чтение данных
 def fetch_form_data():
-    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
-    # DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
+    # DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
+    DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -131,12 +131,11 @@ List[Dict[str, int]]:
     result = []
     question_dfs = [q.data for q in question_dfs]
     for df, target_dict in zip(question_dfs, target_distributions):
+        
         counts = {}
         series = df.squeeze()  # Преобразуем DataFrame с 1 колонкой в Series
-
         for key in target_dict:
             counts[key] = (series == key).sum()
-
         result.append(counts)
 
     return result
@@ -150,7 +149,8 @@ def calculate_raw_weights_from_questions(
     real_count = count_matches_against_targets(questions, targets)
     question_map = {int(q.id.split("_")[1]): q for q in questions}
     selected_questions = [question_map[num] for num in question_numbers]
-    
+    for q in selected_questions:
+        print(q.data)
     df = pd.DataFrame({'ID_ответа': selected_questions[0].data.index})
 
     for idx, q in enumerate(selected_questions):
@@ -160,8 +160,17 @@ def calculate_raw_weights_from_questions(
         weight = 1.0
         for i, q in enumerate(selected_questions):
             val = row[q.name]
+            if i == 0:
+                val_lower = val.lower()
+
+                if any(x in val_lower for x in ["муж", "парень", "м "]) and "жен" not in val_lower:
+                    val = "мужской"
+                elif any(x in val_lower for x in ["жен", "дев", "ж "]) and "муж" not in val_lower:
+                    val = "женский"
+
             target = targets[i].get(val, 0) * sample_size
             actual = real_count[i].get(val, 1)
+
             if actual == 0 or target == 0:
                 local_weight = 0
             else:

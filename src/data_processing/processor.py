@@ -115,7 +115,6 @@ async def process_data(
 
         weights = calculate_raw_weights_from_questions(questions_list, question_numbers_weights,
                                                       [target_pol, target_age, target_art], sample_size- 1)
-        
         # Восстанавливаем target словари
         target_pol = original_target_pol.copy()
         target_age = original_target_age.copy()
@@ -151,8 +150,10 @@ async def process_data(
                 for key in dict_division:
                     q_list = dict_division[key]
                     w_list = dict_weights[key]
-
-                    num = (target_division[key] * sample_size) if target_division else sample_size if type_analyze != "standard" else num_persons
+                    first_question = q_list[0]
+                    total_rows = len(first_question.data) - 2
+                    print(total_rows)
+                    num = (target_division[key] * sample_size) if target_division else sample_size if type_analyze != "standard" else total_rows
 
                     result = analyze_questions(q_list, mood_number, nps_number, csi_numbers, num, w_list, tr_number, roti_number)
                     result = process_result_with_divider(result, key)
