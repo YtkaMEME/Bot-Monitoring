@@ -59,3 +59,5 @@ config/*.yaml
 config/*.yml
 
 TOKEN.py
+PROXY.py
+voice-to-text-466011-71e41c319550.json

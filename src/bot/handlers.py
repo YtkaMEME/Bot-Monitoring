@@ -7,7 +7,7 @@ from aiogram.types import Message, ReplyKeyboardRemove, KeyboardButton, ReplyKey
 from aiogram.fsm.context import FSMContext
 
 from .states import MainState, AdminState
-from .keyboards import build_keyboard, get_yes_no_keyboard
+from .keyboards import build_keyboard, get_yes_no_keyboard, get_back_keyboard
 from .bot_instance import bot
 from src.data_processing.processor import process_data
 from config.config import config
@@ -59,9 +59,6 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
     # Загружаем файл
     await bot.download(file=doc, destination=path)
 
-    # Очищаем состояние
-    await state.clear()
-
     # Обрабатываем данные
     excel_path, csv_path = await process_data(path, mood, nps, csi,
                                               message,
@@ -88,14 +85,39 @@ async def is_question_repeated(state: FSMContext, number: int) -> bool:
     """
     user_data = await state.get_data()
 
-    if "mood_number" in user_data and int(user_data["mood_number"]) == number:
-        return True
+    # Проверка повтора для вопроса настроения
+    if "mood_number" in user_data:
+        try:
+            if int(user_data["mood_number"]) == number:
+                return True
+        except (TypeError, ValueError):
+            pass
 
-    if "nps_number" in user_data and int(user_data["nps_number"]) == number:
-        return True
+    # Проверка повтора для NPS (один или несколько номеров)
+    if "nps_number" in user_data and user_data["nps_number"]:
+        nps_numbers = user_data["nps_number"]
+        if isinstance(nps_numbers, list):
+            if number in nps_numbers:
+                return True
+        else:
+            try:
+                if int(nps_numbers) == number:
+                    return True
+            except (TypeError, ValueError):
+                pass
 
-    if "csi_number" in user_data and int(user_data["csi_number"]) == number:
-        return True
+    # Проверка повтора для CSI (массив номеров или одно значение)
+    if "csi_number" in user_data and user_data["csi_number"]:
+        csi_numbers = user_data["csi_number"]
+        if isinstance(csi_numbers, list):
+            if number in csi_numbers:
+                return True
+        else:
+            try:
+                if int(csi_numbers) == number:
+                    return True
+            except (TypeError, ValueError):
+                pass
 
     return False
 
@@ -140,7 +162,11 @@ async def get_doc(message: Message, state: FSMContext):
     ])
 
     await state.set_state(MainState.type_analyze)
-    await message.answer("Выберите тип обработки", reply_markup=keyboard)
+    msg = await message.answer("Выберите тип обработки", reply_markup=keyboard)
+    data = await state.get_data()
+    ids = data.get("question_message_ids", [])
+    ids.append(msg.message_id)
+    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
 
 @router.callback_query(MainState.type_analyze, F.data.in_(["standard", "weighted"]))
 async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext):
@@ -154,12 +180,25 @@ async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext)
     if analyze_type == "standard":
         await state.update_data(analyze_type="standard")
         await state.set_state(MainState.division)
-        await callback_query.message.answer("Хотите ли вы разделять выгрузку по какому либо вопросу?", reply_markup=get_yes_no_keyboard())
+        msg = await callback_query.message.answer(
+            "Хотите ли вы разделять выгрузку по какому либо вопросу?",
+            reply_markup=get_yes_no_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(msg.message_id)
+        await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
     else:
         await state.update_data(analyze_type="weighted")
         await state.set_state(MainState.gender)
-        await callback_query.message.answer("Введите номер вопроса определяющего Пол участника",
-                                            reply_markup=ReplyKeyboardRemove())
+        msg = await callback_query.message.answer(
+            "Введите номер вопроса определяющего Пол участника",
+            reply_markup=get_back_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(msg.message_id)
+        await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
 
 
 # --- Обработка нажатий по чекбоксам ---
@@ -183,52 +222,98 @@ async def callback_toggle(query: types.CallbackQuery, state: FSMContext):
 # --- Подтверждение выбора ---
 @router.callback_query(F.data == "confirm")
 async def callback_confirm(callback_query: CallbackQuery, state: FSMContext):
-    user_data = await state.get_data()
-    user_data = user_data["checkbox_state"]
-    current_data_iterator = get_true_keys_iterator(user_data)
-    current_data = next(current_data_iterator)
+    data = await state.get_data()
+    checkbox_state = data["checkbox_state"]
+    # Формируем упорядоченный список выбранных параметров
+    steps = [opt for opt in OPTIONS if checkbox_state.get(opt)]
 
-    if not current_data:
-        await callback_query.message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+    if not steps:
+        proc_msg = await callback_query.message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
 
         excel_path, csv_path = await start_process_data(state, callback_query.message)
         chat_id = callback_query.message.chat.id
         await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
         await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
+
+        # Удаляем все предыдущие вопросные сообщения бота
+        data = await state.get_data()
+        ids = data.get("question_message_ids", []) or []
+        last_bot_id = data.get("last_bot_message_id")
+        if last_bot_id and last_bot_id not in ids:
+            ids.append(last_bot_id)
+        for msg_id in ids:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+
         await callback_query.message.delete()
+        try:
+            await proc_msg.delete()
+        except Exception:
+            pass
 
         # Удаляем временные файлы
         if os.path.exists(excel_path):
             os.remove(excel_path)
         if os.path.exists(csv_path):
             os.remove(csv_path)
+        await state.clear()
         return
     
-    await state.update_data(iterator=current_data_iterator)
-    await state.set_state(MainState.checkbox_menu_numbers)        
-    await state.update_data(current_data = current_data)
-    await callback_query.message.answer(f"Введите номер вопроса {current_data}!", reply_markup=ReplyKeyboardRemove())
+    # Инициализируем шаги и индекс для прохождения специальных вопросов
+    await state.update_data(steps=steps, step_index=0, current_data=steps[0])
+    await state.set_state(MainState.checkbox_menu_numbers)
+
+    msg = await callback_query.message.answer(
+        f"Введите номер вопроса {steps[0]}!",
+        reply_markup=get_back_keyboard()
+    )
+    data = await state.get_data()
+    ids = data.get("question_message_ids", [])
+    ids.append(msg.message_id)
+    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
     await callback_query.message.delete()
 
 
-@router.message(MainState.division, F.text == "Да")
-async def yes_quest(message: Message, state: FSMContext):
+@router.callback_query(MainState.division, F.data == "division_yes")
+async def yes_quest(callback_query: CallbackQuery, state: FSMContext):
     """Обработчик ответа 'Да' на вопросы о наличии специальных вопросов"""
+    await callback_query.answer()
+    await callback_query.message.delete()
+
     current_state = await state.get_state()
-    await message.answer("Введите номер/номера вопроса/вопросов!", reply_markup=ReplyKeyboardRemove())
+    msg = await callback_query.message.answer(
+        "Введите номер/номера вопроса/вопросов!",
+        reply_markup=get_back_keyboard()
+    )
     
     if current_state == MainState.division:
         await state.set_state(MainState.division_number)
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(msg.message_id)
+        await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
 
-@router.message(MainState.division, F.text == "Нет")
-async def no_quest(message: Message, state: FSMContext):
+
+@router.callback_query(MainState.division, F.data == "division_no")
+async def no_quest(callback_query: CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await callback_query.message.delete()
 
     await state.update_data(checkbox_state={opt: False for opt in OPTIONS})
     user_data = await state.get_data()
     user_data = user_data["checkbox_state"]
     markup = build_keyboard(user_data, OPTIONS)
 
-    await message.answer("Выбери параметры, которые присутствуют в выгрузке:", reply_markup=markup)
+    msg = await callback_query.message.answer(
+        "Выбери параметры, которые присутствуют в выгрузке:",
+        reply_markup=markup
+    )
+    data = await state.get_data()
+    ids = data.get("question_message_ids", [])
+    ids.append(msg.message_id)
+    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
     return
 
 @router.message(MainState.gender)
@@ -240,14 +325,95 @@ async def handle_number(message: Message, state: FSMContext):
     """Обработчик ввода числовых значений"""
 
     current_state = await state.get_state()
+    data_state = await state.get_data()
     division_number = [1]
 
+    # Обновляем последнее сообщение пользователя (для возможного шага Назад)
+    await state.update_data(last_user_message_id=message.message_id)
+
+    # Обработка нецифрового ввода для специальных случаев
     if not message.text.isdigit():
+        # Парсинг нескольких номеров для деления
         if current_state == MainState.division_number:
             text_message = message.text.strip()
             division_number = [int(num) for num in re.findall(r'\d+', text_message)]
-            if not isinstance(division_number[0], int):
-                await message.answer("Вы ввели не цифру, повторите ввод!")
+            if not division_number:
+                await message.answer("Вы не указали ни одного номера вопроса, повторите ввод!")
+                return
+        # Парсинг нескольких номеров для NPS (ввод через запятую)
+        elif current_state == MainState.checkbox_menu_numbers and data_state.get("current_data") == "NPS":
+            # Разрешаем ввод нескольких NPS через запятую/пробелы (26, 27)
+            text_message = message.text.strip()
+            nps_numbers = [int(num) for num in re.findall(r'\d+', text_message)]
+            if not nps_numbers:
+                await message.answer("Вы не указали ни одного номера вопроса, повторите ввод!")
+                return
+            if 0 in nps_numbers:
+                await message.answer('Вы ввели "0", а это неправильно, так что повторите ввод')
+                return
+            # Проверяем пересечения с уже выбранными специальными вопросами
+            for num in nps_numbers:
+                if await is_question_repeated(state, num):
+                    await message.answer("Введенные вами вопросы не могут совпадать!\nПовторите ввод номера вопроса")
+                    return
+
+            # Сохраняем список NPS номеров
+            await state.update_data(nps_number=nps_numbers)
+
+            # Переходим к следующему спец-вопросу или запускаем обработку — та же логика, что и ниже
+            steps = data_state.get("steps", [])
+            step_index = data_state.get("step_index", 0)
+
+            step_index += 1
+            await state.update_data(step_index=step_index)
+
+            if step_index < len(steps):
+                next_opt = steps[step_index]
+                await state.update_data(current_data=next_opt)
+
+                last_bot_id = data_state.get("last_bot_message_id")
+                if last_bot_id:
+                    try:
+                        await bot.delete_message(chat_id=message.chat.id, message_id=last_bot_id)
+                    except Exception:
+                        pass
+
+                bot_msg = await message.answer(
+                    f"Введите номер вопроса {next_opt}!",
+                    reply_markup=get_back_keyboard()
+                )
+                await state.update_data(last_bot_message_id=bot_msg.message_id)
+            else:
+                proc_msg = await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+
+                excel_path, csv_path = await start_process_data(state, message)
+                chat_id = message.from_user.id
+                await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
+                await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
+
+                # Удаляем все предыдущие вопросные сообщения бота
+                data_state = await state.get_data()
+                ids = data_state.get("question_message_ids", []) or []
+                last_bot_id = data_state.get("last_bot_message_id")
+                if last_bot_id and last_bot_id not in ids:
+                    ids.append(last_bot_id)
+                for msg_id in ids:
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                    except Exception:
+                        pass
+
+                try:
+                    await proc_msg.delete()
+                except Exception:
+                    pass
+
+                if os.path.exists(excel_path):
+                    os.remove(excel_path)
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+                await state.clear()
+            return
         else:
             await message.answer("Вы ввели не цифру, повторите ввод!")
             return
@@ -269,26 +435,43 @@ async def handle_number(message: Message, state: FSMContext):
             number = int(message.text)
             division_number = [number]
 
-    keyboard = get_yes_no_keyboard()
-
     if current_state == MainState.gender:
         await state.update_data(gender=number)
         await state.set_state(MainState.age)
-        await message.answer("Введите номер вопроса определяющего Возраст участника",
-                             reply_markup=ReplyKeyboardRemove())
+        bot_msg = await message.answer(
+            "Введите номер вопроса определяющего Возраст участника",
+            reply_markup=get_back_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
         return
     
     elif current_state == MainState.age:
         await state.update_data(age=number)
         await state.set_state(MainState.art_school)
-        await message.answer("Введите номер вопроса определяющего Арт школу участника",
-                             reply_markup=ReplyKeyboardRemove())
+        bot_msg = await message.answer(
+            "Введите номер вопроса определяющего Арт школу участника",
+            reply_markup=get_back_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
         return
 
     elif current_state == MainState.art_school:
         await state.update_data(art_school=number)
         await state.set_state(MainState.division)
-        await message.answer("Хотите ли вы разделять выгрузку по какому либо вопросу?", reply_markup=keyboard)
+        bot_msg = await message.answer(
+            "Хотите ли вы разделять выгрузку по какому либо вопросу?",
+            reply_markup=get_yes_no_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
         return
 
     elif current_state == MainState.division_number:
@@ -300,44 +483,268 @@ async def handle_number(message: Message, state: FSMContext):
         user_data = user_data["checkbox_state"]
         markup = build_keyboard(user_data, OPTIONS)
 
-        await message.answer("Выбери параметры, которые присутствуют в выгрузке:", reply_markup=markup)
+        bot_msg = await message.answer(
+            "Выбери параметры, которые присутствуют в выгрузке:",
+            reply_markup=markup
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
         return
-    
+
+    # Обработка специальных вопросов (Настроение / TR / ROTI / NPS / CSI)
     data_state = await state.get_data()
-    old_current_data = data_state["current_data"]
-    current_data_iterator = data_state["iterator"]
-    current_data = next(current_data_iterator)
-    await state.update_data(current_data=current_data)
+    if current_state == MainState.checkbox_menu_numbers:
+        steps = data_state.get("steps", [])
+        step_index = data_state.get("step_index", 0)
+        if not steps or step_index >= len(steps):
+            # На всякий случай, если что-то не так со списком шагов — возвращаем к чекбоксам
+            await state.set_state(MainState.checkbox_menu)
+            checkbox_state = data_state.get("checkbox_state", {opt: False for opt in OPTIONS})
+            markup = build_keyboard(checkbox_state, OPTIONS)
+            bot_msg = await message.answer(
+                "Выбери параметры, которые присутствуют в выгрузке:",
+                reply_markup=markup
+            )
+            await state.update_data(last_bot_message_id=bot_msg.message_id)
+            return
 
-    if old_current_data == "Настроение":
-        await state.update_data(mood_number=number)
-    elif old_current_data == "CSI":
-        await state.update_data(csi_number=[number, number + 1])
-        
-    elif old_current_data == "NPS":
-        await state.update_data(nps_number=number)
-    elif old_current_data == "TR":
-        await state.update_data(tr=number)
-    elif old_current_data == "ROTI":
-        await state.update_data(roti=number)
+        current_opt = steps[step_index]
 
-    if current_data:
-        await message.answer(f"Введите номер вопроса {current_data}!", reply_markup=ReplyKeyboardRemove())
-    else:
-        await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+        # Сохраняем введённое значение в зависимости от текущего параметра
+        if current_opt == "Настроение":
+            await state.update_data(mood_number=number)
+        elif current_opt == "CSI":
+            await state.update_data(csi_number=[number, number + 1])
+        elif current_opt == "NPS":
+            # Если ранее уже был список NPS, дополним его, иначе создадим новый список
+            existing_nps = data_state.get("nps_number") or []
+            if not isinstance(existing_nps, list):
+                existing_nps = [int(existing_nps)]
+            if number in existing_nps:
+                await message.answer("Введенные вами вопросы не могут совпадать!\nПовторите ввод номера вопроса")
+                return
+            existing_nps.append(number)
+            await state.update_data(nps_number=existing_nps)
+        elif current_opt == "TR":
+            await state.update_data(tr=number)
+        elif current_opt == "ROTI":
+            await state.update_data(roti=number)
 
-        excel_path, csv_path = await start_process_data(state, message)
-        chat_id = message.from_user.id
-        await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-        await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-            
-        # Удаляем временные файлы
-        if os.path.exists(excel_path):
-            os.remove(excel_path)
-        if os.path.exists(csv_path):
-            os.remove(csv_path)
-        await state.clear()
+        # Переходим к следующему параметру или запускаем обработку
+        step_index += 1
+        await state.update_data(step_index=step_index)
+
+        if step_index < len(steps):
+            next_opt = steps[step_index]
+            await state.update_data(current_data=next_opt)
+
+            # Удаляем предыдущее сообщение бота с вопросом, если оно есть
+            last_bot_id = data_state.get("last_bot_message_id")
+            if last_bot_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_bot_id)
+                except Exception:
+                    pass
+
+            bot_msg = await message.answer(
+                f"Введите номер вопроса {next_opt}!",
+                reply_markup=get_back_keyboard()
+            )
+            data_state = await state.get_data()
+            ids = data_state.get("question_message_ids", [])
+            ids.append(bot_msg.message_id)
+            await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+        else:
+            proc_msg = await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+
+            excel_path, csv_path = await start_process_data(state, message)
+            chat_id = message.from_user.id
+            await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
+            await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
+                
+            # Удаляем все предыдущие вопросные сообщения бота
+            data_state = await state.get_data()
+            ids = data_state.get("question_message_ids", []) or []
+            last_bot_id = data_state.get("last_bot_message_id")
+            if last_bot_id and last_bot_id not in ids:
+                ids.append(last_bot_id)
+            for msg_id in ids:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                except Exception:
+                    pass
+
+            try:
+                await proc_msg.delete()
+            except Exception:
+                pass
+
+            # Удаляем временные файлы
+            if os.path.exists(excel_path):
+                os.remove(excel_path)
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+            await state.clear()
         return
+
+
+@router.callback_query(F.data == "back")
+async def go_back(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки Назад: возвращает пользователя к предыдущему шагу
+    и удаляет последнее сообщение бота и последнее сообщение пользователя.
+    """
+    await callback_query.answer()
+    current_state = await state.get_state()
+    data = await state.get_data()
+
+    # Удаляем сообщение бота с инлайн-кнопками
+    try:
+        await callback_query.message.delete()
+    except Exception:
+        pass
+
+    # Логика возврата по основным шагам диалога
+    if current_state == MainState.gender:
+        # Возврат к выбору типа обработки
+        await state.set_state(MainState.type_analyze)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Стандартный", callback_data="standard"),
+                InlineKeyboardButton(text="Взвешивание", callback_data="weighted")
+            ]
+        ])
+        bot_msg = await callback_query.message.answer("Выберите тип обработки", reply_markup=keyboard)
+        await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.age:
+        await state.set_state(MainState.gender)
+        bot_msg = await callback_query.message.answer(
+            "Введите номер вопроса определяющего Пол участника",
+            reply_markup=get_back_keyboard()
+        )
+        await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.art_school:
+        await state.set_state(MainState.age)
+        bot_msg = await callback_query.message.answer(
+            "Введите номер вопроса определяющего Возраст участника",
+            reply_markup=get_back_keyboard()
+        )
+        await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.division:
+        # В зависимости от типа анализа возвращаемся либо к выбору типа,
+        # либо к последнему вопросу взвешивания (арт-школа)
+        analyze_type = data.get("analyze_type")
+        if analyze_type == "weighted":
+            await state.set_state(MainState.art_school)
+            bot_msg = await callback_query.message.answer(
+                "Введите номер вопроса определяющего Арт школу участника",
+                reply_markup=get_back_keyboard()
+            )
+            await state.update_data(last_bot_message_id=bot_msg.message_id)
+        else:
+            await state.set_state(MainState.type_analyze)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Стандартный", callback_data="standard"),
+                    InlineKeyboardButton(text="Взвешивание", callback_data="weighted")
+                ]
+            ])
+            bot_msg = await callback_query.message.answer("Выберите тип обработки", reply_markup=keyboard)
+            await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.division_number:
+        await state.set_state(MainState.division)
+        bot_msg = await callback_query.message.answer(
+            "Хотите ли вы разделять выгрузку по какому либо вопросу?",
+            reply_markup=get_yes_no_keyboard()
+        )
+        await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.checkbox_menu:
+        # Возврат к вопросу о делении
+        await state.set_state(MainState.division)
+        bot_msg = await callback_query.message.answer(
+            "Хотите ли вы разделять выгрузку по какому либо вопросу?",
+            reply_markup=get_yes_no_keyboard()
+        )
+        await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.checkbox_menu_numbers:
+        # Возврат внутри последовательности специальных вопросов
+        steps = data.get("steps", [])
+        step_index = data.get("step_index", 0)
+
+        if not steps:
+            # Если шагов нет — возвращаемся к чекбоксам
+            await state.set_state(MainState.checkbox_menu)
+            checkbox_state = data.get("checkbox_state", {opt: False for opt in OPTIONS})
+            markup = build_keyboard(checkbox_state, OPTIONS)
+            bot_msg = await callback_query.message.answer(
+                "Выбери параметры, которые присутствуют в выгрузке:",
+                reply_markup=markup
+            )
+            data = await state.get_data()
+            ids = data.get("question_message_ids", [])
+            ids.append(bot_msg.message_id)
+            await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+            return
+
+        if step_index == 0:
+            # На первом шаге специальных вопросов — возвращаемся к чекбоксам
+            await state.set_state(MainState.checkbox_menu)
+            checkbox_state = data.get("checkbox_state", {opt: False for opt in OPTIONS})
+            markup = build_keyboard(checkbox_state, OPTIONS)
+            bot_msg = await callback_query.message.answer(
+                "Выбери параметры, которые присутствуют в выгрузке:",
+                reply_markup=markup
+            )
+            data = await state.get_data()
+            ids = data.get("question_message_ids", [])
+            ids.append(bot_msg.message_id)
+            await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+            return
+
+        # Шаг назад внутри последовательности
+        step_index -= 1
+        last_opt = steps[step_index]
+
+        # Очищаем сохранённое значение для этого параметра (ставим None)
+        if last_opt == "Настроение":
+            await state.update_data(mood_number=None)
+        elif last_opt == "CSI":
+            await state.update_data(csi_number=None)
+        elif last_opt == "NPS":
+            await state.update_data(nps_number=None)
+        elif last_opt == "TR":
+            await state.update_data(tr=None)
+        elif last_opt == "ROTI":
+            await state.update_data(roti=None)
+
+        await state.update_data(step_index=step_index, current_data=last_opt)
+
+        bot_msg = await callback_query.message.answer(
+            f"Введите номер вопроса {last_opt}!",
+            reply_markup=get_back_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+        return
+
+    # Если для текущего шага возврат не предусмотрен
+    await callback_query.message.answer("Кнопка «Назад» недоступна на этом шаге.")
 
     
 

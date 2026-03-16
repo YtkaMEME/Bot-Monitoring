@@ -32,7 +32,7 @@ def extract_group_label(key: str, field: str) -> str:
 async def process_data(
     path: str,
     mood_number: Optional[int] = None,
-    nps_number: Optional[int] = None,
+    nps_number: Optional[List[int]] = None,
     csi_numbers: Optional[List[int]] = None,
     message: Optional[Message] = None,
     type_analyze = "standard",
@@ -47,7 +47,7 @@ async def process_data(
     Args:
         path: путь к файлу Excel
         mood_number: номер вопроса о настроении
-        nps_number: номер вопроса NPS
+        nps_number: номера вопросов NPS
         csi_numbers: номера вопросов CSI
         message: объект сообщения для отправки уведомлений
         
@@ -130,6 +130,7 @@ async def process_data(
     total_rows = len(first_question.data)
 
     num_persons = total_rows - 2
+    summary_text = ""
     try:
         results_list = []
 
@@ -223,8 +224,12 @@ async def process_data(
             result.to_excel(excel_path)
         result.to_csv(csv_path)
 
-        if message and result.skipped_questions:
-            await message.answer(f"Были пропущены следующие вопросы{result.skipped_questions}")
+        if message:
+            if result.skipped_questions:
+                await message.answer(f"Были пропущены следующие вопросы{result.skipped_questions}")
+            summary_text = result.build_summary()
+            if summary_text:
+                await message.answer(summary_text)
 
     except AnalysisError as e:
         if message:

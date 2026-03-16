@@ -1,23 +1,34 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-def get_yes_no_keyboard() -> ReplyKeyboardMarkup:
+def get_yes_no_keyboard() -> InlineKeyboardMarkup:
     """
-    Создание клавиатуры с кнопками Да/Нет
-    
-    Returns:
-        Клавиатура с кнопками Да/Нет
+    Инлайн-клавиатура с кнопками Да/Нет и Назад
     """
-    kb = [
-        [
-            KeyboardButton(text="Да"),
-            KeyboardButton(text="Нет"),
-        ],
-    ]
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=kb,
-        resize_keyboard=True,
-        input_field_placeholder="Выбери вариант",
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да", callback_data="division_yes"),
+                InlineKeyboardButton(text="Нет", callback_data="division_no"),
+            ],
+            [
+                InlineKeyboardButton(text="Назад", callback_data="back"),
+            ],
+        ]
+    )
+    return keyboard
+
+
+def get_back_keyboard() -> InlineKeyboardMarkup:
+    """
+    Инлайн-кнопка Назад под сообщением бота
+    """
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Назад", callback_data="back"),
+            ],
+        ]
     )
     return keyboard
 
@@ -63,6 +74,13 @@ def build_keyboard(user_data, OPTIONS) -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text="Подтвердить",
             callback_data="confirm"
+        )
+    )
+    # Добавляем кнопку Назад на отдельной строке
+    builder.row(
+        InlineKeyboardButton(
+            text="Назад",
+            callback_data="back"
         )
     )
 

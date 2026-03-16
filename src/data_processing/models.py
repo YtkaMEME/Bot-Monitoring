@@ -56,6 +56,116 @@ class AnalysisResult:
     def has_data(self) -> bool:
         """Проверка наличия данных в результате анализа"""
         return len(self.data_frames) > 0
+    
+    def build_summary(self) -> str:
+        """
+        Формирует краткую текстовую сводку по основным показателям (NPS, CSI, TR, ROTI),
+        с учетом возможного деления (колонки 'Разделитель').
+        """
+        lines: List[str] = []
+
+        # NPS
+        if not self.nps_frame.empty:
+            df = self.nps_frame
+            # Если есть разделитель — группируем по нему, иначе один общий результат
+            if "Разделитель" in df.columns:
+                for divider, group in df.groupby("Разделитель"):
+                    if group.empty:
+                        continue
+                    # Если есть несколько NPS-вопросов, выводим по каждому вопросу в рамках разделителя
+                    if "Номер вопроса" in group.columns:
+                        for qid, q_group in group.groupby("Номер вопроса"):
+                            last_row = q_group.iloc[-1]
+                            value = last_row.get("Процент")
+                            if isinstance(value, (int, float)):
+                                percent = round(float(value) * 100, 1)
+                                lines.append(f"NPS {qid} {divider}: {percent:.1f}%")
+                    else:
+                        last_row = group.iloc[-1]
+                        value = last_row.get("Процент")
+                        if isinstance(value, (int, float)):
+                            percent = round(float(value) * 100, 1)
+                            lines.append(f"NPS {divider}: {percent:.1f}%")
+            else:
+                # Если есть несколько NPS-вопросов без деления — выводим каждый
+                if "Номер вопроса" in df.columns:
+                    for _, group in df.groupby("Номер вопроса"):
+                        last_row = group.iloc[-1]
+                        value = last_row.get("Процент")
+                        if isinstance(value, (int, float)):
+                            percent = round(float(value) * 100, 1)
+                            qid = last_row.get("Номер вопроса")
+                            lines.append(f"NPS {qid}: {percent:.1f}%")
+                else:
+                    last_row = df.iloc[-1]
+                    value = last_row.get("Процент")
+                    if isinstance(value, (int, float)):
+                        percent = round(float(value) * 100, 1)
+                        lines.append(f"NPS: {percent:.1f}%")
+
+        # TR
+        if not self.tr_frame.empty:
+            df = self.tr_frame
+            if "Разделитель" in df.columns:
+                for divider, group in df.groupby("Разделитель"):
+                    row = group[group.get("Категория") == "TR (%)"]
+                    if row.empty:
+                        continue
+                    row = row.iloc[0]
+                    value = row.get("Процент")
+                    if isinstance(value, (int, float)):
+                        percent = round(float(value) * 100, 1)
+                        lines.append(f"TR {divider}: {percent:.1f}%")
+            else:
+                row = df[df.get("Категория") == "TR (%)"]
+                if not row.empty:
+                    row = row.iloc[0]
+                    value = row.get("Процент")
+                    if isinstance(value, (int, float)):
+                        percent = round(float(value) * 100, 1)
+                        lines.append(f"TR: {percent:.1f}%")
+
+        # ROTI
+        if not self.roti_frame.empty:
+            df = self.roti_frame
+            if "Разделитель" in df.columns:
+                for divider, group in df.groupby("Разделитель"):
+                    row = group[group.get("Оценка") == "Среднее ROTI"]
+                    if row.empty:
+                        continue
+                    row = row.iloc[0]
+                    value = row.get("Процент")
+                    if isinstance(value, (int, float)):
+                        lines.append(f"ROTI {divider}: {float(value):.2f}")
+            else:
+                row = df[df.get("Оценка") == "Среднее ROTI"]
+                if not row.empty:
+                    row = row.iloc[0]
+                    value = row.get("Процент")
+                    if isinstance(value, (int, float)):
+                        lines.append(f"ROTI: {float(value):.2f}")
+
+        # CSI
+        if not self.csi_frame.empty:
+            df = self.csi_frame
+            if "Разделитель" in df.columns:
+                for divider, group in df.groupby("Разделитель"):
+                    row = group[group.get("Параметр") == "Итого:"]
+                    if row.empty:
+                        continue
+                    row = row.iloc[0]
+                    value = row.get("CSI по параметру")
+                    if isinstance(value, (int, float)):
+                        lines.append(f"CSI {divider}: {float(value):.2f}%")
+            else:
+                row = df[df.get("Параметр") == "Итого:"]
+                if not row.empty:
+                    row = row.iloc[0]
+                    value = row.get("CSI по параметру")
+                    if isinstance(value, (int, float)):
+                        lines.append(f"CSI: {float(value):.2f}%")
+
+        return "\n".join(lines)
         
     def to_excel(self, excel_path: str) -> None:
         """

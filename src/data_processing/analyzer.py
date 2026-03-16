@@ -638,20 +638,20 @@ def create_csi_df(csi_dic: Dict[str, List[float]]) -> pd.DataFrame:
 def analyze_questions(
         questions_list: List[Question],
         mood: Optional[int] = None,
-        nps: Optional[int] = None,
+        nps: Optional[List[int]] = None,
         csi: Optional[List[int]] = None,
         num_person: int = 1,
         weights = None,
         tr: Optional[int] = None,
         roti: Optional[int] = None
-) -> AnalysisResult:
+    ) -> AnalysisResult:
     """
     Анализ вопросов из анкеты
 
     Args:
         questions_list: список вопросов
         mood: номер вопроса о настроении
-        nps: номер вопроса NPS
+        nps: номера вопросов NPS
         csi: номера вопросов CSI
         num_person: количество участников
 
@@ -668,8 +668,9 @@ def analyze_questions(
     if mood:
         mood = f"D1_{mood}"
 
+    nps_ids = set()
     if nps:
-        nps = f"D1_{nps}"
+        nps_ids = {f"D1_{num}" for num in nps}
 
     if tr:
         tr = f"D1_{tr}"
@@ -684,15 +685,23 @@ def analyze_questions(
             csi = [f"D1_{csi[0]}"]
 
     for question in questions_list:
-        # Обработка NPS вопроса
-        if nps and nps == question.id:
+        # Обработка NPS вопросов (поддержка нескольких номеров)
+        if nps_ids and question.id in nps_ids:
             if question.type != "Шкала" and question.type != "Выпадающий список":
                 error_nps = AnalysisError(
                     f"Ошибка в выборе номера вопроса NPS. NPS вcегда является Шкалой или Выпадающим списком!"
                     f"\nОшибка произошла при обработке вопроса номер {question.id}")
                 raise error_nps
 
-            result.nps_frame = nps_quest(question, weights)
+            nps_result = nps_quest(question, weights)
+            # Добавляем информацию о вопросе для каждого блока NPS
+            nps_result["Номер вопроса"] = question.id
+            nps_result["Вопрос"] = question.name
+
+            if result.nps_frame.empty:
+                result.nps_frame = nps_result
+            else:
+                result.nps_frame = pd.concat([result.nps_frame, nps_result], ignore_index=True)
             continue
 
         if tr and tr == question.id:
