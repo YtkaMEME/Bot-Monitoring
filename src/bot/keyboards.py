@@ -19,6 +19,30 @@ def get_yes_no_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
+def get_yandex_replace_keyboard() -> InlineKeyboardMarkup:
+    """
+    Клавиатура для конфликта имени файла на Яндекс.Диске.
+    """
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Заменить", callback_data="division_yes"),
+                InlineKeyboardButton(text="Не сохранять", callback_data="division_no"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Сохранить с другим названием",
+                    callback_data="yandex_save_renamed",
+                ),
+            ],
+            [
+                InlineKeyboardButton(text="Назад", callback_data="back"),
+            ],
+        ]
+    )
+    return keyboard
+
+
 def get_back_keyboard() -> InlineKeyboardMarkup:
     """
     Инлайн-кнопка Назад под сообщением бота
@@ -29,6 +53,20 @@ def get_back_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Назад", callback_data="back"),
             ],
         ]
+    )
+    return keyboard
+
+
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Основная постоянная клавиатура пользователя.
+    """
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Скачать отчет из Anketolog")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие",
     )
     return keyboard
 

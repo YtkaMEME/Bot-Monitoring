@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, \
@@ -7,9 +8,32 @@ from aiogram.types import Message, ReplyKeyboardRemove, KeyboardButton, ReplyKey
 from aiogram.fsm.context import FSMContext
 
 from .states import MainState, AdminState
-from .keyboards import build_keyboard, get_yes_no_keyboard, get_back_keyboard
+from .keyboards import (
+    build_keyboard,
+    get_yes_no_keyboard,
+    get_back_keyboard,
+    get_yandex_replace_keyboard,
+    get_main_keyboard,
+)
 from .bot_instance import bot
 from src.data_processing.processor import process_data
+from src.utils.yandex_disk import (
+    YandexDiskError,
+    build_timestamped_name,
+    check_file_exists_on_yandex,
+    upload_single_file_to_yandex,
+)
+from src.utils.anketolog import (
+    download_report_by_survey_name,
+    locate_survey_by_name,
+    create_report,
+    wait_until_report_ready,
+    download_file,
+    get_extension,
+    sanitize_filename,
+    REPORT_FORMAT,
+    AnketologError,
+)
 from config.config import config
 from aiogram.types import CallbackQuery
 
@@ -26,6 +50,173 @@ def get_true_keys_iterator(state: dict[str, bool]):
             yield key
         while True:
             yield False
+
+
+async def send_results_to_user(chat_id: int, file_paths: list[str]) -> None:
+    """
+    Отправляет файлы пользователю в Telegram.
+    """
+    for index, file_path in enumerate(file_paths):
+        reply_markup = get_main_keyboard() if index == len(file_paths) - 1 else None
+        await bot.send_document(
+            chat_id=chat_id,
+            document=FSInputFile(file_path),
+            reply_markup=reply_markup,
+        )
+
+
+async def start_uploaded_file_processing(
+    state: FSMContext,
+    message: Message,
+    file_path: str,
+    original_file_name: str,
+    document=None,
+) -> None:
+    """
+    Запускает стандартный сценарий обработки файла без повторной отправки пользователем.
+    """
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    await state.clear()
+    await state.update_data(
+        file_path=file_path,
+        document=document,
+        original_file_name=original_file_name,
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Стандартный", callback_data="standard"),
+            InlineKeyboardButton(text="Взвешивание", callback_data="weighted")
+        ]
+    ])
+
+    await state.set_state(MainState.type_analyze)
+    msg = await message.answer("Выберите тип обработки", reply_markup=keyboard)
+    data = await state.get_data()
+    ids = data.get("question_message_ids", [])
+    ids.append(msg.message_id)
+    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
+
+
+async def upload_results_to_yandex_and_send_links(
+    chat_id: int, file_paths: list[str], original_file_name: str | None = None
+) -> None:
+    """
+    Загружает на Яндекс.Диск только xlsx и отправляет ссылку в Telegram.
+    Если файл с таким именем уже есть, просит пользователя подтвердить замену.
+    """
+    xlsx_path = next((path for path in file_paths if path.lower().endswith(".xlsx")), None)
+    if not xlsx_path:
+        await bot.send_message(chat_id=chat_id, text="XLSX файл не найден, ссылка на Яндекс.Диск не создана.")
+        return
+
+    file_name = original_file_name or os.path.basename(xlsx_path)
+    exists = await check_file_exists_on_yandex(file_name)
+    if exists is None:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="Загрузка на Яндекс.Диск не настроена. Проверьте YANDEX_DISK_TOKEN в .env",
+        )
+        return
+
+    if exists:
+        raise YandexDiskError("FILE_EXISTS")
+
+    uploaded = await upload_single_file_to_yandex(
+        local_path=xlsx_path,
+        overwrite=False,
+        remote_name=file_name,
+    )
+    if not uploaded:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="Загрузка на Яндекс.Диск не настроена. Проверьте YANDEX_DISK_TOKEN в .env",
+        )
+        return
+
+    uploaded_name, link = uploaded
+    await bot.send_message(chat_id=chat_id, text=f"Файл загружен на Яндекс.Диск:\n{uploaded_name}: {link}")
+
+async def ask_yandex_upload_choice(state: FSMContext, message: Message) -> None:
+    await state.set_state(MainState.yandex_upload)
+    msg = await message.answer(
+        "Загрузить файлы на Яндекс.Диск и отправить ссылку?",
+        reply_markup=get_yes_no_keyboard(),
+    )
+    data = await state.get_data()
+    ids = data.get("question_message_ids", [])
+    ids.append(msg.message_id)
+    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
+
+
+async def process_and_send_results(
+    state: FSMContext, message: Message, chat_id: int, upload_to_yandex: bool
+) -> None:
+    proc_msg = await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
+
+    excel_path, csv_path = await start_process_data(state, message)
+    file_paths = [excel_path, csv_path]
+    user_data = await state.get_data()
+    original_file_name = user_data.get("original_file_name")
+
+    # Сначала отправляем файлы пользователю
+    await send_results_to_user(chat_id, file_paths)
+
+    # После отправки файлов опционально загружаем на Яндекс.Диск и отправляем ссылки
+    if upload_to_yandex:
+        try:
+            await upload_results_to_yandex_and_send_links(
+                chat_id,
+                [excel_path],
+                original_file_name=original_file_name,
+            )
+        except YandexDiskError as error:
+            if str(error) == "FILE_EXISTS":
+                await state.update_data(
+                    pending_file_paths=file_paths,
+                    pending_chat_id=chat_id,
+                    original_file_name=original_file_name,
+                )
+                await state.set_state(MainState.yandex_replace)
+                msg = await message.answer(
+                    "Файл с таким именем уже есть на Яндекс.Диске. Заменить?",
+                    reply_markup=get_yandex_replace_keyboard(),
+                )
+                data = await state.get_data()
+                ids = data.get("question_message_ids", [])
+                ids.append(msg.message_id)
+                await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
+                try:
+                    await proc_msg.delete()
+                except Exception:
+                    pass
+                return
+            await bot.send_message(chat_id=chat_id, text=f"Не удалось загрузить файл на Яндекс.Диск: {error}")
+        except OSError as error:
+            await bot.send_message(chat_id=chat_id, text=f"Ошибка чтения файла при загрузке: {error}")
+
+    # Удаляем все предыдущие вопросные сообщения бота
+    data_state = await state.get_data()
+    ids = data_state.get("question_message_ids", []) or []
+    last_bot_id = data_state.get("last_bot_message_id")
+    if last_bot_id and last_bot_id not in ids:
+        ids.append(last_bot_id)
+    for msg_id in ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+
+    try:
+        await proc_msg.delete()
+    except Exception:
+        pass
+
+    # Удаляем временные файлы
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    await state.clear()
 
 async def start_process_data(state: FSMContext, message: Message) -> tuple[str, str]:
     """
@@ -56,8 +247,9 @@ async def start_process_data(state: FSMContext, message: Message) -> tuple[str, 
         question_numbers_weights = [gender, age, art_school]
     division = user_data.get("division")
 
-    # Загружаем файл
-    await bot.download(file=doc, destination=path)
+    # Если файл пришел из Telegram, сначала скачиваем его локально.
+    if doc is not None:
+        await bot.download(file=doc, destination=path)
 
     # Обрабатываем данные
     excel_path, csv_path = await process_data(path, mood, nps, csi,
@@ -125,21 +317,50 @@ async def is_question_repeated(state: FSMContext, number: int) -> bool:
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Обработчик команды /start"""
-    await message.answer("Мяувет! \U0001F638")
+    await message.answer("Мяувет! \U0001F638", reply_markup=get_main_keyboard())
     await message.answer("Если хочешь начать работу - отправь мне файл выгрузку с анкетолога в формате .xlsx")
+    await message.answer("Если хочешь получить отчет по названию анкеты, нажми кнопку `Скачать отчет из Anketolog`.")
 
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     """Обработчик команды /cancel"""
     await state.clear()
-    await message.answer("Отмена прошла успешно, вы можете заново отправить файл", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "Отмена прошла успешно, вы можете заново отправить файл",
+        reply_markup=get_main_keyboard(),
+    )
+
+
+@router.message(F.text == "Скачать отчет из Anketolog")
+async def get_anketolog_report_command(message: Message, state: FSMContext):
+    """Запуск сценария получения отчета из Anketolog по названию анкеты."""
+    await state.clear()
+    await state.set_state(MainState.survey_report_name)
+    await message.answer(
+        "Отправьте название анкеты из Anketolog. После этого я попрошу подтвердить, что название корректно.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.message(MainState.survey_report_name)
+async def receive_survey_report_name(message: Message, state: FSMContext):
+    survey_name = (message.text or "").strip()
+    if not survey_name:
+        await message.answer("Название анкеты не должно быть пустым. Попробуйте еще раз.")
+        return
+
+    await state.update_data(pending_survey_name=survey_name)
+    await state.set_state(MainState.survey_report_confirm)
+    await message.answer(
+        f"Это название анкеты:\n{survey_name}\n\nОно корректно?",
+        reply_markup=get_yes_no_keyboard(),
+    )
 
 
 @router.message(F.document)
 async def get_doc(message: Message, state: FSMContext):
     """Обработчик получения документа"""
-    await state.clear()
     document = message.document
     doc_name = document.file_name
 
@@ -148,25 +369,13 @@ async def get_doc(message: Message, state: FSMContext):
         return
 
     file_path = f'{config.download_dir}/{doc_name}'
-    
-    # Создаем директорию, если не существует
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-    await state.update_data(file_path=file_path, document=document)
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Стандартный", callback_data="standard"),
-            InlineKeyboardButton(text="Взвешивание", callback_data="weighted")  # исправляем здесь
-        ]
-    ])
-
-    await state.set_state(MainState.type_analyze)
-    msg = await message.answer("Выберите тип обработки", reply_markup=keyboard)
-    data = await state.get_data()
-    ids = data.get("question_message_ids", [])
-    ids.append(msg.message_id)
-    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
+    await start_uploaded_file_processing(
+        state=state,
+        message=message,
+        file_path=file_path,
+        original_file_name=doc_name,
+        document=document,
+    )
 
 @router.callback_query(MainState.type_analyze, F.data.in_(["standard", "weighted"]))
 async def process_analyze_type(callback_query: CallbackQuery, state: FSMContext):
@@ -228,37 +437,8 @@ async def callback_confirm(callback_query: CallbackQuery, state: FSMContext):
     steps = [opt for opt in OPTIONS if checkbox_state.get(opt)]
 
     if not steps:
-        proc_msg = await callback_query.message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
-
-        excel_path, csv_path = await start_process_data(state, callback_query.message)
-        chat_id = callback_query.message.chat.id
-        await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-        await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-
-        # Удаляем все предыдущие вопросные сообщения бота
-        data = await state.get_data()
-        ids = data.get("question_message_ids", []) or []
-        last_bot_id = data.get("last_bot_message_id")
-        if last_bot_id and last_bot_id not in ids:
-            ids.append(last_bot_id)
-        for msg_id in ids:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass
-
         await callback_query.message.delete()
-        try:
-            await proc_msg.delete()
-        except Exception:
-            pass
-
-        # Удаляем временные файлы
-        if os.path.exists(excel_path):
-            os.remove(excel_path)
-        if os.path.exists(csv_path):
-            os.remove(csv_path)
-        await state.clear()
+        await ask_yandex_upload_choice(state, callback_query.message)
         return
     
     # Инициализируем шаги и индекс для прохождения специальных вопросов
@@ -277,44 +457,244 @@ async def callback_confirm(callback_query: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(MainState.division, F.data == "division_yes")
+@router.callback_query(MainState.yandex_upload, F.data == "division_yes")
+@router.callback_query(MainState.yandex_replace, F.data == "division_yes")
+@router.callback_query(MainState.survey_report_confirm, F.data == "division_yes")
 async def yes_quest(callback_query: CallbackQuery, state: FSMContext):
     """Обработчик ответа 'Да' на вопросы о наличии специальных вопросов"""
     await callback_query.answer()
     await callback_query.message.delete()
 
     current_state = await state.get_state()
-    msg = await callback_query.message.answer(
-        "Введите номер/номера вопроса/вопросов!",
-        reply_markup=get_back_keyboard()
-    )
-    
     if current_state == MainState.division:
+        msg = await callback_query.message.answer(
+            "Введите номер/номера вопроса/вопросов!",
+            reply_markup=get_back_keyboard()
+        )
         await state.set_state(MainState.division_number)
         data = await state.get_data()
         ids = data.get("question_message_ids", [])
         ids.append(msg.message_id)
         await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
+        return
+
+    if current_state == MainState.yandex_upload:
+        await process_and_send_results(
+            state=state,
+            message=callback_query.message,
+            chat_id=callback_query.message.chat.id,
+            upload_to_yandex=True,
+        )
+        return
+
+    if current_state == MainState.yandex_replace:
+        data = await state.get_data()
+        file_paths = data.get("pending_file_paths", [])
+        chat_id = data.get("pending_chat_id", callback_query.message.chat.id)
+        original_file_name = data.get("original_file_name")
+        xlsx_path = next((path for path in file_paths if path.lower().endswith(".xlsx")), None)
+
+        if xlsx_path:
+            try:
+                uploaded = await upload_single_file_to_yandex(
+                    local_path=xlsx_path,
+                    overwrite=True,
+                    remote_name=original_file_name,
+                )
+                if uploaded:
+                    uploaded_name, link = uploaded
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"Файл загружен на Яндекс.Диск:\n{uploaded_name}: {link}",
+                    )
+            except (YandexDiskError, OSError) as error:
+                await bot.send_message(chat_id=chat_id, text=f"Не удалось загрузить файл на Яндекс.Диск: {error}")
+
+        for file_path in file_paths:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        await state.clear()
+        return
+
+    if current_state == MainState.survey_report_confirm:
+        data = await state.get_data()
+        survey_name = data.get("pending_survey_name")
+        if not survey_name:
+            await state.set_state(MainState.survey_report_name)
+            await callback_query.message.answer("Не удалось получить название анкеты. Отправьте его еще раз.")
+            return
+
+        search_msg = await callback_query.message.answer("Начинаю поиск нужной анкеты в Anketolog...")
+        handed_off_to_processing = False
+        try:
+            survey = await asyncio.to_thread(locate_survey_by_name, survey_name)
+            survey_id = survey.get("id")
+            survey_real_name = (survey.get("settings") or {}).get("name") or survey_name
+
+            report_msg = await callback_query.message.answer(
+                "Нужная анкета найдена. Начинаю формирование отчета в Anketolog..."
+            )
+
+            report = await asyncio.to_thread(create_report, survey_id)
+            report_id = report.get("id")
+            report_status = report.get("status")
+            report_url = report.get("url")
+
+            if report_status == "complete" and report_url:
+                ready_format = report.get("format", REPORT_FORMAT)
+                ext = get_extension(ready_format)
+                file_path = os.path.join(
+                    config.download_dir,
+                    f"{sanitize_filename(survey_real_name)}_{survey_id}.{ext}",
+                )
+                await asyncio.to_thread(download_file, report_url, file_path)
+            else:
+                ready_report = await asyncio.to_thread(wait_until_report_ready, survey_id, report_id)
+                ready_url = ready_report.get("url")
+                ready_format = ready_report.get("format", REPORT_FORMAT)
+
+                if not ready_url:
+                    raise AnketologError("Отчет помечен как готовый, но URL отсутствует.")
+
+                ext = get_extension(ready_format)
+                file_path = os.path.join(
+                    config.download_dir,
+                    f"{sanitize_filename(survey_real_name)}_{survey_id}.{ext}",
+                )
+                await asyncio.to_thread(download_file, ready_url, file_path)
+
+            await bot.send_document(
+                chat_id=callback_query.message.chat.id,
+                document=FSInputFile(file_path),
+                caption=f"Отчет по анкете: {survey_real_name}",
+            )
+            await start_uploaded_file_processing(
+                state=state,
+                message=callback_query.message,
+                file_path=file_path,
+                original_file_name=os.path.basename(file_path),
+                document=None,
+            )
+            handed_off_to_processing = True
+        except AnketologError as error:
+            await callback_query.message.answer(f"Не удалось получить отчет: {error}")
+        except OSError as error:
+            await callback_query.message.answer(f"Не удалось сохранить или отправить отчет: {error}")
+        finally:
+            try:
+                await search_msg.delete()
+            except Exception:
+                pass
+            if "report_msg" in locals():
+                try:
+                    await report_msg.delete()
+                except Exception:
+                    pass
+            if "file_path" in locals() and not handed_off_to_processing and os.path.exists(file_path):
+                os.remove(file_path)
+            if not handed_off_to_processing:
+                await state.clear()
+        return
 
 
 @router.callback_query(MainState.division, F.data == "division_no")
+@router.callback_query(MainState.yandex_upload, F.data == "division_no")
+@router.callback_query(MainState.yandex_replace, F.data == "division_no")
+@router.callback_query(MainState.survey_report_confirm, F.data == "division_no")
 async def no_quest(callback_query: CallbackQuery, state: FSMContext):
     await callback_query.answer()
     await callback_query.message.delete()
 
-    await state.update_data(checkbox_state={opt: False for opt in OPTIONS})
-    user_data = await state.get_data()
-    user_data = user_data["checkbox_state"]
-    markup = build_keyboard(user_data, OPTIONS)
+    current_state = await state.get_state()
 
-    msg = await callback_query.message.answer(
-        "Выбери параметры, которые присутствуют в выгрузке:",
-        reply_markup=markup
-    )
+    if current_state == MainState.division:
+        await state.update_data(checkbox_state={opt: False for opt in OPTIONS})
+        user_data = await state.get_data()
+        user_data = user_data["checkbox_state"]
+        markup = build_keyboard(user_data, OPTIONS)
+
+        msg = await callback_query.message.answer(
+            "Выбери параметры, которые присутствуют в выгрузке:",
+            reply_markup=markup
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(msg.message_id)
+        await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
+        return
+
+    if current_state == MainState.yandex_upload:
+        await process_and_send_results(
+            state=state,
+            message=callback_query.message,
+            chat_id=callback_query.message.chat.id,
+            upload_to_yandex=False,
+        )
+        return
+
+    if current_state == MainState.yandex_replace:
+        data = await state.get_data()
+        file_paths = data.get("pending_file_paths", [])
+        chat_id = data.get("pending_chat_id", callback_query.message.chat.id)
+        await bot.send_message(
+            chat_id=chat_id,
+            text="Файл на Яндекс.Диск не сохранен. Исходный файл на диске оставлен без изменений.",
+        )
+
+        for file_path in file_paths:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        await state.clear()
+        return
+
+    if current_state == MainState.survey_report_confirm:
+        await state.set_state(MainState.survey_report_name)
+        await callback_query.message.answer(
+            "Хорошо, отправьте название анкеты еще раз.",
+            reply_markup=get_back_keyboard(),
+        )
+        return
+
+
+@router.callback_query(MainState.yandex_replace, F.data == "yandex_save_renamed")
+async def save_renamed_to_yandex(callback_query: CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await callback_query.message.delete()
+
     data = await state.get_data()
-    ids = data.get("question_message_ids", [])
-    ids.append(msg.message_id)
-    await state.update_data(last_bot_message_id=msg.message_id, question_message_ids=ids)
-    return
+    file_paths = data.get("pending_file_paths", [])
+    chat_id = data.get("pending_chat_id", callback_query.message.chat.id)
+    original_file_name = data.get("original_file_name")
+    xlsx_path = next((path for path in file_paths if path.lower().endswith(".xlsx")), None)
+
+    if xlsx_path:
+        remote_name = build_timestamped_name(original_file_name or os.path.basename(xlsx_path))
+        try:
+            uploaded = await upload_single_file_to_yandex(
+                local_path=xlsx_path,
+                overwrite=False,
+                remote_name=remote_name,
+            )
+            if uploaded:
+                uploaded_name, link = uploaded
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"Файл загружен на Яндекс.Диск:\n{uploaded_name}: {link}",
+                )
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "Исходный файл на Яндекс.Диске не был заменен. "
+                        f"Сохранена новая версия с измененным названием: {uploaded_name}"
+                    ),
+                )
+        except (YandexDiskError, OSError) as error:
+            await bot.send_message(chat_id=chat_id, text=f"Не удалось загрузить файл на Яндекс.Диск: {error}")
+
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    await state.clear()
 
 @router.message(MainState.gender)
 @router.message(MainState.age)
@@ -384,35 +764,7 @@ async def handle_number(message: Message, state: FSMContext):
                 )
                 await state.update_data(last_bot_message_id=bot_msg.message_id)
             else:
-                proc_msg = await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
-
-                excel_path, csv_path = await start_process_data(state, message)
-                chat_id = message.from_user.id
-                await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-                await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-
-                # Удаляем все предыдущие вопросные сообщения бота
-                data_state = await state.get_data()
-                ids = data_state.get("question_message_ids", []) or []
-                last_bot_id = data_state.get("last_bot_message_id")
-                if last_bot_id and last_bot_id not in ids:
-                    ids.append(last_bot_id)
-                for msg_id in ids:
-                    try:
-                        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                    except Exception:
-                        pass
-
-                try:
-                    await proc_msg.delete()
-                except Exception:
-                    pass
-
-                if os.path.exists(excel_path):
-                    os.remove(excel_path)
-                if os.path.exists(csv_path):
-                    os.remove(csv_path)
-                await state.clear()
+                await ask_yandex_upload_choice(state, message)
             return
         else:
             await message.answer("Вы ввели не цифру, повторите ввод!")
@@ -557,36 +909,7 @@ async def handle_number(message: Message, state: FSMContext):
             ids.append(bot_msg.message_id)
             await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
         else:
-            proc_msg = await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
-
-            excel_path, csv_path = await start_process_data(state, message)
-            chat_id = message.from_user.id
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(excel_path))
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(csv_path))
-                
-            # Удаляем все предыдущие вопросные сообщения бота
-            data_state = await state.get_data()
-            ids = data_state.get("question_message_ids", []) or []
-            last_bot_id = data_state.get("last_bot_message_id")
-            if last_bot_id and last_bot_id not in ids:
-                ids.append(last_bot_id)
-            for msg_id in ids:
-                try:
-                    await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                except Exception:
-                    pass
-
-            try:
-                await proc_msg.delete()
-            except Exception:
-                pass
-
-            # Удаляем временные файлы
-            if os.path.exists(excel_path):
-                os.remove(excel_path)
-            if os.path.exists(csv_path):
-                os.remove(csv_path)
-            await state.clear()
+            await ask_yandex_upload_choice(state, message)
         return
 
 
@@ -636,6 +959,14 @@ async def go_back(callback_query: CallbackQuery, state: FSMContext):
             reply_markup=get_back_keyboard()
         )
         await state.update_data(last_bot_message_id=bot_msg.message_id)
+        return
+
+    if current_state == MainState.survey_report_name:
+        await state.clear()
+        await callback_query.message.answer(
+            "Получение отчета по названию анкеты отменено.",
+            reply_markup=get_main_keyboard(),
+        )
         return
 
     if current_state == MainState.division:
@@ -736,6 +1067,44 @@ async def go_back(callback_query: CallbackQuery, state: FSMContext):
         bot_msg = await callback_query.message.answer(
             f"Введите номер вопроса {last_opt}!",
             reply_markup=get_back_keyboard()
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+        return
+
+    if current_state == MainState.yandex_upload:
+        await state.set_state(MainState.checkbox_menu)
+        checkbox_state = data.get("checkbox_state", {opt: False for opt in OPTIONS})
+        markup = build_keyboard(checkbox_state, OPTIONS)
+        bot_msg = await callback_query.message.answer(
+            "Выбери параметры, которые присутствуют в выгрузке:",
+            reply_markup=markup
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+        return
+
+    if current_state == MainState.yandex_replace:
+        await state.set_state(MainState.yandex_upload)
+        bot_msg = await callback_query.message.answer(
+            "Загрузить файлы на Яндекс.Диск и отправить ссылку?",
+            reply_markup=get_yes_no_keyboard(),
+        )
+        data = await state.get_data()
+        ids = data.get("question_message_ids", [])
+        ids.append(bot_msg.message_id)
+        await state.update_data(last_bot_message_id=bot_msg.message_id, question_message_ids=ids)
+        return
+
+    if current_state == MainState.survey_report_confirm:
+        await state.set_state(MainState.survey_report_name)
+        bot_msg = await callback_query.message.answer(
+            "Отправьте название анкеты из Anketolog.",
+            reply_markup=get_back_keyboard(),
         )
         data = await state.get_data()
         ids = data.get("question_message_ids", [])

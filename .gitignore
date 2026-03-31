@@ -22,14 +22,16 @@ wheels/
 
 # Virtual Environment
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
+.python-version
 
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
@@ -54,10 +56,16 @@ Thumbs.db
 
 # Project specific
 TOKEN.py
-config/*.json
 config/*.yaml
 config/*.yml
-
-TOKEN.py
 PROXY.py
 voice-to-text-466011-71e41c319550.json
+survey_*.txt
+report_*.txt
+available_survey_names*.txt
+survey_folders.json
+survey_list_all_response.json
+survey_names_all.txt
+available_survey_names_not_found.txt
+test_download.py
+file_list.py

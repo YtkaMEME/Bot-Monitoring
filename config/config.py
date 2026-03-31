@@ -7,8 +7,12 @@ class Config:
     """Конфигурация приложения"""
     
     def __init__(self) -> None:
+        self._load_env_file(".env")
+
         # Токен бота, загружаем из переменной окружения или из файла
         self.token: str = os.getenv("BOT_TOKEN") or self._load_token()
+        self.yandex_disk_token: str = os.getenv("YANDEX_DISK_TOKEN", "")
+        self.yandex_reports_folder: str = os.getenv("YANDEX_REPORTS_FOLDER", "disk:/Anketolog Reports")
         
         # Пути к JSON файлам
         self.allowed_users_file: str = "config/allowed_users.json"
@@ -23,6 +27,27 @@ class Config:
         self.allowed_users: List[int] = self._load_json(self.allowed_users_file, [])
         self.admin_users: List[int] = self._load_json(self.admin_users_file, [])
         self.trash_list: List[str] = self._load_json(self.trash_list_file, [])
+
+    def _load_env_file(self, env_path: str) -> None:
+        """Простая загрузка переменных окружения из .env"""
+        if not os.path.exists(env_path):
+            return
+
+        try:
+            with open(env_path, "r", encoding="utf-8") as env_file:
+                for raw_line in env_file:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except OSError:
+            # Если .env недоступен, продолжаем без него
+            return
     
     def _load_token(self) -> str:
         """Загрузка токена из файла"""

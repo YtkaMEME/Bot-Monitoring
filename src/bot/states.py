@@ -26,6 +26,10 @@ class MainState(StatesGroup):
     roti_number = State()
     checkbox_menu = State()
     checkbox_menu_numbers = State()
+    yandex_upload = State()
+    yandex_replace = State()
+    survey_report_name = State()
+    survey_report_confirm = State()
     
 
 class AdminState(StatesGroup):
