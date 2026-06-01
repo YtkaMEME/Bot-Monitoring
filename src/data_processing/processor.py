@@ -1,10 +1,10 @@
 import os
-from typing import Tuple, Optional, List, Any
+from typing import Tuple, Optional, List
 
 import pandas as pd
 from aiogram.types import Message
 
-from .calculate_targets import fetch_form_data, save_calculation_results,   calculate_raw_weights_from_questions
+from .calculate_targets import fetch_form_data, save_calculation_results, calculate_raw_weights_from_questions
 from .file_processor import read_file, table_validation, create_questions_list
 from .analyzer import analyze_questions
 from .models import AnalysisError, AnalysisResult
@@ -71,8 +71,27 @@ async def process_data(
     weights = pd.DataFrame({'ones': [1] * length})
 
     if type_analyze == "weighted":
+        try:
+            form_data = fetch_form_data()
+        except ValueError as error:
+            if message:
+                await message.answer(f"{error}")
+            if os.path.exists(path):
+                os.remove(path)
+            raise AnalysisError(str(error)) from error
+
+        if form_data is None:
+            error = AnalysisError(
+                "Для взвешивания сначала заполните и сохраните параметры генеральной совокупности в mini app."
+            )
+            if message:
+                await message.answer(f"{error}")
+            if os.path.exists(path):
+                os.remove(path)
+            raise error
+
         (male_count, female_count, art_school_labels, art_school_distribution,
-         age_group_labels, age_group_distribution) = fetch_form_data()
+         age_group_labels, age_group_distribution) = form_data
 
         # Параметры дисперсионного расчёта
         confidence_level = 0.95
@@ -80,11 +99,18 @@ async def process_data(
         E = 0.05
 
         # Получаем таргетные распределения
-        target_pol, target_age, target_art, sample_size = prepare_target_distributions(
-            male_count, female_count,
-            age_group_distribution, age_group_labels,
-            art_school_distribution, art_school_labels,
-            confidence_level, p, E)
+        try:
+            target_pol, target_age, target_art, sample_size = prepare_target_distributions(
+                male_count, female_count,
+                age_group_distribution, age_group_labels,
+                art_school_distribution, art_school_labels,
+                confidence_level, p, E)
+        except ValueError as error:
+            if message:
+                await message.answer(f"{error}")
+            if os.path.exists(path):
+                os.remove(path)
+            raise AnalysisError(str(error)) from error
         
         save_calculation_results(sample_size, target_pol, target_age, target_art)
 
@@ -113,8 +139,15 @@ async def process_data(
                 col_name = q.data.columns[0]
                 q.data[col_name] = q.data[col_name].astype(str).apply(clean_text)
 
-        weights = calculate_raw_weights_from_questions(questions_list, question_numbers_weights,
-                                                      [target_pol, target_age, target_art], sample_size- 1)
+        try:
+            weights = calculate_raw_weights_from_questions(questions_list, question_numbers_weights,
+                                                          [target_pol, target_age, target_art], sample_size- 1)
+        except ValueError as error:
+            if message:
+                await message.answer(f"{error}")
+            if os.path.exists(path):
+                os.remove(path)
+            raise AnalysisError(str(error)) from error
         # Восстанавливаем target словари
         target_pol = original_target_pol.copy()
         target_age = original_target_age.copy()
@@ -246,4 +279,3 @@ async def process_data(
         raise
     
     return excel_path, csv_path
-

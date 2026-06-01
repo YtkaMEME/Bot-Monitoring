@@ -1,5 +1,6 @@
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from config.config import config
 
 def get_yes_no_keyboard() -> InlineKeyboardMarkup:
     """
@@ -61,10 +62,18 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     """
     Основная постоянная клавиатура пользователя.
     """
+    rows = []
+    if config.mini_app_url:
+        rows.append([
+            KeyboardButton(
+                text="Открыть настройки взвешивания",
+                web_app=WebAppInfo(url=config.mini_app_url),
+            )
+        ])
+    rows.append([KeyboardButton(text="Скачать отчет из Anketolog")])
+
     keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Скачать отчет из Anketolog")],
-        ],
+        keyboard=rows,
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )

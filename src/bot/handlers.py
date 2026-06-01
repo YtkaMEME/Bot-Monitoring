@@ -17,6 +17,7 @@ from .keyboards import (
 )
 from .bot_instance import bot
 from src.data_processing.processor import process_data
+from src.data_processing.models import AnalysisError
 from src.utils.yandex_disk import (
     YandexDiskError,
     build_timestamped_name,
@@ -154,7 +155,16 @@ async def process_and_send_results(
 ) -> None:
     proc_msg = await message.answer("Происходит обработка данных...", reply_markup=ReplyKeyboardRemove())
 
-    excel_path, csv_path = await start_process_data(state, message)
+    try:
+        excel_path, csv_path = await start_process_data(state, message)
+    except AnalysisError:
+        try:
+            await proc_msg.delete()
+        except Exception:
+            pass
+        await state.clear()
+        return
+
     file_paths = [excel_path, csv_path]
     user_data = await state.get_data()
     original_file_name = user_data.get("original_file_name")
@@ -1137,6 +1147,7 @@ async def change_list_to_del(message: Message, state: FSMContext):
     user_id = message.from_user.id
 
     # Проверка прав пользователя
+    config.refresh_allowed_users()
     if user_id not in config.allowed_users:
         await message.answer("У вас нет доступа к этой функции.")
         return
@@ -1243,7 +1254,8 @@ async def add_put_users_list(message: Message, state: FSMContext):
         if user_id in config.allowed_users:
             config.allowed_users.remove(user_id)
     elif current_state == AdminState.add_users_list:
-        config.allowed_users.append(user_id)
+        if user_id not in config.allowed_users:
+            config.allowed_users.append(user_id)
 
     # Сохраняем изменения в файл
     config.save_allowed_users()

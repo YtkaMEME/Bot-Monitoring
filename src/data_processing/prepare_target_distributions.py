@@ -29,24 +29,34 @@ def prepare_target_distributions(male_count, female_count,
     На выходе: словари target-долей + N
     """
 
+    total_population = male_count + female_count
+    if total_population <= 0:
+        raise ValueError("Сумма мужчин и женщин должна быть больше нуля.")
+
+    total_age = sum(age_group_distribution)
+    if total_age <= 0:
+        raise ValueError("Сумма возрастных групп должна быть больше нуля.")
+
+    total_art = sum(art_school_distribution)
+    if total_art <= 0:
+        raise ValueError("Сумма арт-школ должна быть больше нуля.")
+
     # Считаем общее количество
-    N = calculate_sample_size(confidence_level, p, E, male_count + female_count)
+    N = calculate_sample_size(confidence_level, p, E, total_population)
 
     # Доли по полу
     target_pol = {
-        'Мужской': male_count / (male_count + female_count),
-        'Женский': female_count / (male_count + female_count)
+        'Мужской': male_count / total_population,
+        'Женский': female_count / total_population
     }
 
     # Доли по возрасту
-    total_age = sum(age_group_distribution)
     target_vozrast = {
         label: count / total_age
         for label, count in zip(age_group_labels, age_group_distribution)
     }
 
     # Доли по арт-школам
-    total_art = sum(art_school_distribution)
     target_art = {
         label: count / total_art
         for label, count in zip(art_school_labels, art_school_distribution)

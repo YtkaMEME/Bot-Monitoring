@@ -30,6 +30,8 @@
      - `ANKETOLOG_TOKEN`
      - `YANDEX_DISK_TOKEN`
      - `YANDEX_REPORTS_FOLDER`
+     - `MONITORING_DB_PATH` - путь к общей SQLite базе сайта и бота
+     - `MINI_APP_URL` - HTTPS URL Telegram Mini App, если нужна кнопка открытия сайта из бота
    - Создать локальный `TOKEN.py` на основе `TOKEN.example.py`
    - При необходимости создать локальный `PROXY.py` на основе `PROXY.example.py`
 
@@ -68,8 +70,12 @@ python main.py
   локальный файл с proxy, если нужен для запуска
 - `.env`:
   локальный файл с токенами Anketolog и Яндекс.Диска
+- `MONITORING_DB_PATH`:
+  общий SQLite файл для mini app и бота. Если не задан, бот попробует использовать
+  соседний каталог `../TelegramMiniAppMonitoring/data/db.sqlite`
 - `config/allowed_users.json`, `config/admins.json`, `config/list_to_del.json`:
-  создаются приложением автоматически при первом запуске, если отсутствуют
+  создаются приложением автоматически при первом запуске, если отсутствуют.
+  `allowed_users` дополнительно синхронизируется с таблицей `allowed_users` в общей SQLite базе.
 
 ## Требования
 

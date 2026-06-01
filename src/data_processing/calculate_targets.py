@@ -1,5 +1,4 @@
-from random import sample
-
+import os
 from .models import Question
 import pandas as pd
 from typing import List, Dict
@@ -7,13 +6,57 @@ from typing import List, Dict
 import sqlite3
 import json
 
-from .prepare_target_distributions import prepare_target_distributions
+from config.config import config
+
+
+def _connect_monitoring_db() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(config.monitoring_db_path), exist_ok=True)
+    conn = sqlite3.connect(config.monitoring_db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def _ensure_form_data_table(cursor: sqlite3.Cursor) -> None:
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS form_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            menCount TEXT,
+            womenCount TEXT,
+            artSchools TEXT,
+            ageGroups TEXT
+        )
+    ''')
+
+
+def _ensure_calculation_results_table(cursor: sqlite3.Cursor) -> None:
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS calculation_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sampleSize INTEGER,
+            targetPol TEXT,
+            targetAge TEXT,
+            targetArt TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+
+def _normalize_weight_value(value, dimension_index: int) -> str:
+    text = "" if pd.isna(value) else str(value).strip().lower()
+    if dimension_index == 0:
+        if any(part in text for part in ["муж", "парень", "male"]) or text in {"м", "m"}:
+            return "мужской"
+        if any(part in text for part in ["жен", "дев", "female"]) or text in {"ж", "f"}:
+            return "женский"
+    return text
+
 
 def rake_weights(
     df: pd.DataFrame,
     targets: Dict[str, Dict[str, float]],
     sample_size,
-    max_iterations: int = 1,
+    max_iterations: int = 50,
     tolerance: float = 1e-4
 ) -> pd.DataFrame:
     """
@@ -35,8 +78,10 @@ def rake_weights(
 
         for col, target_dist in targets.items():
             total_weight = weights.sum()
+            if total_weight == 0:
+                raise ValueError("Сумма весов равна нулю. Проверьте совпадение групп на сайте и в выгрузке.")
             # Текущие доли
-            actuals = df.groupby(col)['Вес'].sum() / total_weight
+            actuals = weights.groupby(df[col]).sum() / total_weight
             for category, target_share in target_dist.items():
                 actual_share = actuals.get(category, 0)
                 if actual_share == 0:
@@ -58,22 +103,12 @@ def rake_weights(
     df['Вес'] = weights
     return df
 
+
 def save_calculation_results(sample_size, target_pol, target_age, target_art):
-    # DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
-    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect_monitoring_db()
     cursor = conn.cursor()
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS calculation_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sampleSize INTEGER,
-            targetPol TEXT,
-            targetAge TEXT,
-            targetArt TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    _ensure_calculation_results_table(cursor)
 
     cursor.execute('''
         INSERT INTO calculation_results (sampleSize, targetPol, targetAge, targetArt)
@@ -88,13 +123,13 @@ def save_calculation_results(sample_size, target_pol, target_age, target_art):
     conn.commit()
     conn.close()
 
+
 # Подключение к базе и чтение данных
 def fetch_form_data():
-    DB_PATH = '/TelegramMiniAppMonitoring/data/db.sqlite'
-    # DB_PATH = '/Users/a1-6/MINIApp for Bot monitoring/data/db.sqlite'
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect_monitoring_db()
     cursor = conn.cursor()
 
+    _ensure_form_data_table(cursor)
     cursor.execute("SELECT menCount, womenCount, artSchools, ageGroups FROM form_data ORDER BY id DESC LIMIT 1")
     row = cursor.fetchone()
     conn.close()
@@ -102,19 +137,23 @@ def fetch_form_data():
     if not row:
         return None
 
-    men_count = int(row[0])
-    women_count = int(row[1])
+    try:
+        men_count = int(row[0])
+        women_count = int(row[1])
 
-    artSchools_data = json.loads(row[2])
-    ageGroups_data = json.loads(row[3])
+        artSchools_data = json.loads(row[2])
+        ageGroups_data = json.loads(row[3])
 
-    art_school_labels = [item['name'] for item in artSchools_data]
-    art_school_distribution = [int(item['count']) for item in artSchools_data]
+        art_school_labels = [str(item['name']) for item in artSchools_data]
+        art_school_distribution = [int(item['count']) for item in artSchools_data]
 
-    age_group_labels = [item['range'] for item in ageGroups_data]
-    age_group_distribution = [int(item['count']) for item in ageGroups_data]
+        age_group_labels = [str(item['range']) for item in ageGroups_data]
+        age_group_distribution = [int(item['count']) for item in ageGroups_data]
+    except (TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
+        raise ValueError("Данные формы в mini app заполнены некорректно.") from error
 
     return men_count, women_count, art_school_labels, art_school_distribution, age_group_labels, age_group_distribution
+
 
 def count_matches_against_targets(question_dfs: List[Question], target_distributions: List[Dict[str, float]]) -> \
 List[Dict[str, int]]:
@@ -130,10 +169,10 @@ List[Dict[str, int]]:
     """
     result = []
     question_dfs = [q.data for q in question_dfs]
-    for df, target_dict in zip(question_dfs, target_distributions):
+    for idx, (df, target_dict) in enumerate(zip(question_dfs, target_distributions)):
         
         counts = {}
-        series = df.squeeze()  # Преобразуем DataFrame с 1 колонкой в Series
+        series = df.squeeze().apply(lambda value: _normalize_weight_value(value, idx))
         for key in target_dict:
             counts[key] = (series == key).sum()
         result.append(counts)
@@ -148,25 +187,20 @@ def calculate_raw_weights_from_questions(
 ):
     real_count = count_matches_against_targets(questions, targets)
     question_map = {int(q.id.split("_")[1]): q for q in questions}
+    missing_questions = [num for num in question_numbers if num not in question_map]
+    if missing_questions:
+        raise ValueError(f"В выгрузке не найдены вопросы для взвешивания: {missing_questions}")
+
     selected_questions = [question_map[num] for num in question_numbers]
-    for q in selected_questions:
-        print(q.data)
     df = pd.DataFrame({'ID_ответа': selected_questions[0].data.index})
 
     for idx, q in enumerate(selected_questions):
-        df[q.name] = q.data["value"].values
+        df[q.name] = q.data["value"].apply(lambda value: _normalize_weight_value(value, idx)).values
 
     def calc_row_weight(row):
         weight = 1.0
         for i, q in enumerate(selected_questions):
             val = row[q.name]
-            if i == 0:
-                val_lower = val.lower()
-
-                if any(x in val_lower for x in ["муж", "парень", "м "]) and "жен" not in val_lower:
-                    val = "мужской"
-                elif any(x in val_lower for x in ["жен", "дев", "ж "]) and "муж" not in val_lower:
-                    val = "женский"
 
             target = targets[i].get(val, 0) * sample_size
             actual = real_count[i].get(val, 1)
@@ -183,7 +217,10 @@ def calculate_raw_weights_from_questions(
     df['Вес'] = pd.to_numeric(df['Вес'], errors='coerce').fillna(0).astype(float)
 
     # Шаг 2: нормализуем сумму весов до sample_size
-    df['Вес'] *= sample_size / df['Вес'].sum()
+    weight_sum = df['Вес'].sum()
+    if weight_sum == 0:
+        raise ValueError("Не удалось рассчитать веса: группы на сайте не совпали с ответами в выгрузке.")
+    df['Вес'] *= sample_size / weight_sum
 
     # Шаг 3: применяем итеративное взвешивание (RAKING)
     rake_targets = {
