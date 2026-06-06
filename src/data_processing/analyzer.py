@@ -399,6 +399,28 @@ def capitalize_after_punctuation(text: str) -> str:
     pattern = re.compile(r'([.!?]\s*)(\S)')
     return pattern.sub(capitalize, text)
 
+def format_free_answer(answer) -> Optional[str]:
+    """
+    Форматирование одного свободного ответа.
+    """
+    if pd.isna(answer):
+        return None
+
+    answer = str(answer).strip()
+    if not answer or answer.lower() == "nan":
+        return None
+
+    word_count = len(answer.split(" "))
+    if word_count < 2:
+        return None
+
+    answer = answer.lower()
+    answer = capitalize_after_punctuation(answer)
+    if answer.endswith("."):
+        answer = answer[:-1]
+
+    return f'«{answer[0].upper() + answer[1:]}»'
+
 def free_answer(question: Question) -> Tuple[str, List[str]]:
     """
     Обработка вопроса со свободным ответом
@@ -413,19 +435,34 @@ def free_answer(question: Question) -> Tuple[str, List[str]]:
     answers = question.data["value"].iloc[2:]
 
     for answer in answers:
-        answer = str(answer)
-        word_count = len(answer.split(" "))
+        formatted_answer = format_free_answer(answer)
+        if formatted_answer:
+            result[1].append(formatted_answer)
+    return result
 
-        if word_count < 2:
-            continue
+def matrix_free_answer(question: Question) -> Tuple[str, List[str]]:
+    """
+    Обработка одной колонки матрицы свободных ответов.
+    В выгрузке первые две строки содержат строку матрицы и поле ответа.
+    """
+    matrix_row = question.data["value"].iloc[0]
+    matrix_column = question.data["value"].iloc[1]
 
-        answer = answer.lower()
-        answer = capitalize_after_punctuation(answer)
-        if answer[-1] == ".":
-            answer = answer[:-1]
+    name_parts = [question.name.strip()]
+    for part in (matrix_row, matrix_column):
+        if pd.notna(part):
+            part = str(part).strip()
+            if part:
+                name_parts.append(part)
 
-        answer = f'«{answer[0].upper() + answer[1:]}»'
-        result[1].append(answer)
+    result = [" | ".join(name_parts), []]
+    answers = question.data["value"].iloc[2:]
+
+    for answer in answers:
+        formatted_answer = format_free_answer(answer)
+        if formatted_answer:
+            result[1].append(formatted_answer)
+
     return result
 
 def nps_quest(question: Question, weights) -> pd.DataFrame:
@@ -658,7 +695,7 @@ def analyze_questions(
     Returns:
         Результат анализа
     """
-    skip_quest = ["Матрица свободных ответов", "Имя", "Дата", "Email", "Телефон", "Загрузка файла"]
+    skip_quest = ["Имя", "Дата", "Email", "Телефон", "Загрузка файла"]
     result = AnalysisResult()
     csi_pre = {}
 
@@ -779,7 +816,15 @@ def analyze_questions(
         # Обработка свободного ответа
         elif question.type == "Свободный ответ":
             free_question = free_answer(question)
-            free_answers.append(free_question)
+            if free_question[1]:
+                free_answers.append(free_question)
+            continue
+
+        # Обработка матрицы свободных ответов
+        elif question.type == "Матрица свободных ответов":
+            free_question = matrix_free_answer(question)
+            if free_question[1]:
+                free_answers.append(free_question)
             continue
 
         # Пропуск специальных типов вопросов
@@ -791,7 +836,8 @@ def analyze_questions(
         elif question.type == "Группа свободных ответов":
             question.name = question.data["value"].iloc[0]
             free_question_group = free_answer(question)
-            free_answers.append(free_question_group)
+            if free_question_group[1]:
+                free_answers.append(free_question_group)
             continue
 
         # Обработка множественного выбора
@@ -826,4 +872,4 @@ def analyze_questions(
     if free_answers_df["Вопрос"]:
         result.free_answers_frame = pd.DataFrame(free_answers_df)
 
-    return result 
+    return result
