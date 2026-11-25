@@ -1,5 +1,14 @@
-from src.data_processing.models import Question
 import pandas as pd
+
+from src.data_processing.models import Question
+
+
+def divider_column_names(divisions):
+    return [
+        f"Разделитель {index} (вопрос {number})"
+        for index, number in enumerate(divisions, start=1)
+    ]
+
 
 def division_df(questions_list, division, weights):
     division = f"D1_{division}"
@@ -49,36 +58,31 @@ def division_df(questions_list, division, weights):
     return result, weights_result
 
 def process_result_with_divider(result, key):
-        def add_divider(df):
-            if isinstance(df, pd.DataFrame):
-                df["Разделитель"] = key
+    divider_values = key if isinstance(key, dict) else {"Разделитель": key}
 
-        dfs = result.data_frames if isinstance(result.data_frames, list) else [result.data_frames]
-        for df in dfs:
-            add_divider(df)
-        if hasattr(result, "free_answers_frame") and result.free_answers_frame is not None:
-            add_divider(result.free_answers_frame)
-        if hasattr(result, "csi_frame") and result.csi_frame is not None:
-            add_divider(result.csi_frame)
-        if hasattr(result, "nps_frame") and result.nps_frame is not None:
-            add_divider(result.nps_frame)
-        if hasattr(result, "roti_frame") and result.roti_frame is not None:
-            add_divider(result.roti_frame)
-        if hasattr(result, "tr_frame") and result.tr_frame is not None:
-            add_divider(result.tr_frame)
-        return result
+    def add_divider(df):
+        if isinstance(df, pd.DataFrame):
+            for column, value in divider_values.items():
+                df[column] = value
+
+    dfs = result.data_frames if isinstance(result.data_frames, list) else [result.data_frames]
+    for df in dfs:
+        add_divider(df)
+    for name in ("free_answers_frame", "csi_frame", "nps_frame", "roti_frame", "tr_frame"):
+        add_divider(getattr(result, name, None))
+    return result
 
 def multi_division_df(
     questions_list,
     weights,
     divisions,
-    prefix=""
+    prefix=()
 ):
     """
     Рекурсивно разбивает данные по нескольким вопросам
     """
     if not divisions:
-        return {prefix.rstrip(" | "): (questions_list, weights)}
+        return {prefix: (questions_list, weights)}
 
     current_division = divisions[0]
     result = {}
@@ -86,10 +90,9 @@ def multi_division_df(
     dict_div, dict_weights = division_df(questions_list, current_division, weights)
 
     for value, q_list in dict_div.items():
-        new_prefix = f"{prefix}{current_division}={value} | "
         w_list = dict_weights[value]
         # рекурсивно вызываем для оставшихся делений
-        sub_result = multi_division_df(q_list, w_list, divisions[1:], prefix=new_prefix)
+        sub_result = multi_division_df(q_list, w_list, divisions[1:], prefix=(*prefix, value))
         result.update(sub_result)
 
     return result

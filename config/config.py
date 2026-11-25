@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import importlib.util
 from pathlib import Path
 from typing import List, Any, Optional
 
@@ -14,6 +15,7 @@ class Config:
 
         # Токен бота, загружаем из переменной окружения или из файла
         self.token: str = os.getenv("BOT_TOKEN") or self._load_token()
+        self.proxy_url: str = self._load_proxy_url()
         self.yandex_disk_token: str = os.getenv("YANDEX_DISK_TOKEN", "")
         self.yandex_reports_folder: str = os.getenv("YANDEX_REPORTS_FOLDER", "disk:/Anketolog Reports")
         self.monitoring_db_path: str = os.path.abspath(
@@ -59,6 +61,30 @@ class Config:
         except OSError:
             # Если .env недоступен, продолжаем без него
             return
+
+    def _load_proxy_url(self) -> str:
+        """Загрузка proxy из .env или локального PROXY.py."""
+        env_proxy = os.getenv("PROXY", "").strip()
+        if env_proxy:
+            return env_proxy
+
+        proxy_file = self.project_root / "PROXY.py"
+        if not proxy_file.exists():
+            return ""
+
+        spec = importlib.util.spec_from_file_location("bot_monitoring_proxy", proxy_file)
+        if spec is None or spec.loader is None:
+            raise ValueError("Не удалось загрузить PROXY.py")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        proxy_url = str(getattr(module, "PROXY", "")).strip()
+
+        # Шаблонное значение означает, что proxy не настроен.
+        if proxy_url.upper() in {"SOCK5 PROXY", "SOCKS5 PROXY"}:
+            return ""
+
+        return proxy_url
     
     def _load_token(self) -> str:
         """Загрузка токена из файла"""

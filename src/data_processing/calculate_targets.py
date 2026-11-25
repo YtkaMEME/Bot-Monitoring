@@ -185,13 +185,13 @@ def calculate_raw_weights_from_questions(
         question_numbers: List[int],
         targets: List[Dict[str, float]], sample_size
 ):
-    real_count = count_matches_against_targets(questions, targets)
     question_map = {int(q.id.split("_")[1]): q for q in questions}
     missing_questions = [num for num in question_numbers if num not in question_map]
     if missing_questions:
         raise ValueError(f"В выгрузке не найдены вопросы для взвешивания: {missing_questions}")
 
     selected_questions = [question_map[num] for num in question_numbers]
+    real_count = count_matches_against_targets(selected_questions, targets)
     df = pd.DataFrame({'ID_ответа': selected_questions[0].data.index})
 
     for idx, q in enumerate(selected_questions):

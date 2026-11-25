@@ -1,6 +1,74 @@
-from typing import List, Dict, Any, Optional, Tuple
-import pandas as pd
 from copy import deepcopy
+from decimal import Decimal
+import math
+import re
+from typing import List, Dict, Any, Optional, Tuple
+
+import pandas as pd
+from openpyxl import load_workbook
+
+
+_DECIMAL_TEXT = re.compile(r"[+-]?\d+\.\d+(?:[eE][+-]?\d+)?%?")
+_PERCENT_FORMAT = re.compile(r"0(?:\.(0+))?%")
+
+
+def format_excel_decimal_separator(excel_path: str) -> None:
+    """Записывает дробные значения во всех листах XLSX с десятичной запятой."""
+    workbook = load_workbook(excel_path)
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                value = cell.value
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if isinstance(value, float) and not math.isfinite(value):
+                        continue
+
+                    percent_format = _PERCENT_FORMAT.fullmatch(cell.number_format)
+                    if percent_format:
+                        percent = Decimal(str(value)) * 100
+                        places = len(percent_format.group(1) or "")
+                        if places == 0 and percent != percent.to_integral_value():
+                            # На основном листе показываем дробную часть процента,
+                            # даже если старый формат ячейки был целым процентом.
+                            places = 2
+                            formatted = f"{percent:.{places}f}".rstrip("0").rstrip(".")
+                        else:
+                            formatted = f"{percent:.{places}f}"
+                        cell.value = f"{formatted.replace('.', ',')}%"
+                        cell.number_format = "@"
+                    elif isinstance(value, float) and not value.is_integer():
+                        cell.value = format(Decimal(str(value)), "f").replace(".", ",")
+                        cell.number_format = "@"
+                elif isinstance(value, str) and _DECIMAL_TEXT.fullmatch(value):
+                    cell.value = value.replace(".", ",")
+                    cell.number_format = "@"
+
+    workbook.save(excel_path)
+
+
+def _divider_columns(frame: pd.DataFrame) -> List[str]:
+    if "Разделитель" in frame.columns:
+        return ["Разделитель"]
+    return [
+        column for column in frame.columns
+        if isinstance(column, str) and column.startswith("Разделитель ")
+    ]
+
+
+def _divider_groups(frame: pd.DataFrame):
+    columns = _divider_columns(frame)
+    for values, group in frame.groupby(columns, sort=False, dropna=False):
+        if not isinstance(values, tuple):
+            values = (values,)
+        if columns == ["Разделитель"] or values[0] == "Общее":
+            label = str(values[0])
+        else:
+            label = " | ".join(
+                f"{column}={value}"
+                for column, value in zip(columns, values)
+                if pd.notna(value) and value != ""
+            )
+        yield label, group
 
 
 class Question:
@@ -60,7 +128,7 @@ class AnalysisResult:
     def build_summary(self) -> str:
         """
         Формирует краткую текстовую сводку по основным показателям (NPS, CSI, TR, ROTI),
-        с учетом возможного деления (колонки 'Разделитель').
+        с учетом возможного деления по одному или нескольким вопросам.
         """
         lines: List[str] = []
 
@@ -68,8 +136,8 @@ class AnalysisResult:
         if not self.nps_frame.empty:
             df = self.nps_frame
             # Если есть разделитель — группируем по нему, иначе один общий результат
-            if "Разделитель" in df.columns:
-                for divider, group in df.groupby("Разделитель"):
+            if _divider_columns(df):
+                for divider, group in _divider_groups(df):
                     if group.empty:
                         continue
                     # Если есть несколько NPS-вопросов, выводим по каждому вопросу в рамках разделителя
@@ -106,8 +174,8 @@ class AnalysisResult:
         # TR
         if not self.tr_frame.empty:
             df = self.tr_frame
-            if "Разделитель" in df.columns:
-                for divider, group in df.groupby("Разделитель"):
+            if _divider_columns(df):
+                for divider, group in _divider_groups(df):
                     row = group[group.get("Категория") == "TR (%)"]
                     if row.empty:
                         continue
@@ -128,8 +196,8 @@ class AnalysisResult:
         # ROTI
         if not self.roti_frame.empty:
             df = self.roti_frame
-            if "Разделитель" in df.columns:
-                for divider, group in df.groupby("Разделитель"):
+            if _divider_columns(df):
+                for divider, group in _divider_groups(df):
                     row = group[group.get("Оценка") == "Среднее ROTI"]
                     if row.empty:
                         continue
@@ -148,8 +216,8 @@ class AnalysisResult:
         # CSI
         if not self.csi_frame.empty:
             df = self.csi_frame
-            if "Разделитель" in df.columns:
-                for divider, group in df.groupby("Разделитель"):
+            if _divider_columns(df):
+                for divider, group in _divider_groups(df):
                     row = group[group.get("Параметр") == "Итого:"]
                     if row.empty:
                         continue
@@ -242,11 +310,9 @@ class AnalysisResult:
                 workbook = writer.book
                 worksheet = workbook['ROTI']
                 for cell in worksheet['C']:  # колонка "Процент"
-                        if cell.row > 1:
-                            if cell.value is not None and isinstance(cell.value, (int, float)):
-                                # Только для строк с оценками от 1 до 5 — не форматируем строку со средним значением
-                                if not isinstance(cell.value, str):
-                                    cell.number_format = '0.00%'
+                    if cell.row > 1 and worksheet.cell(cell.row, 1).value != "Среднее ROTI":
+                        if isinstance(cell.value, (int, float)):
+                            cell.number_format = '0.00%'
 
         # Добавляем CSI если есть
         if not self.csi_frame.empty:
@@ -333,11 +399,9 @@ class AnalysisResult:
                 workbook = writer.book
                 worksheet = workbook['ROTI']
                 for cell in worksheet['C']:  # колонка "Процент"
-                        if cell.row > 1:
-                            if cell.value is not None and isinstance(cell.value, (int, float)):
-                                # Только для строк с оценками от 1 до 5 — не форматируем строку со средним значением
-                                if not isinstance(cell.value, str):
-                                    cell.number_format = '0.00%'
+                    if cell.row > 1 and worksheet.cell(cell.row, 1).value != "Среднее ROTI":
+                        if isinstance(cell.value, (int, float)):
+                            cell.number_format = '0.00%'
 
         # Добавляем CSI если есть
         if not self.csi_frame.empty:

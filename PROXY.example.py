@@ -1,1 +1,1 @@
-PROXY = "SOCK5 PROXY"
+PROXY = "socks5://user:password@host:port"

@@ -28,6 +28,7 @@
    - Скопировать `.env.example` в `.env`
    - Заполнить в `.env`:
      - `ANKETOLOG_TOKEN`
+     - `PROXY` - SOCKS5 proxy для Telegram и Anketolog, если прямой доступ недоступен
      - `YANDEX_DISK_TOKEN`
      - `YANDEX_REPORTS_FOLDER`
      - `MONITORING_DB_PATH` - путь к общей SQLite базе сайта и бота
@@ -67,9 +68,9 @@ python main.py
 - `TOKEN.py`:
   локальный файл с Telegram Bot token, не должен попадать в git
 - `PROXY.py`:
-  локальный файл с proxy, если нужен для запуска
+  локальный файл с proxy, если `PROXY` не задан в `.env`
 - `.env`:
-  локальный файл с токенами Anketolog и Яндекс.Диска
+  локальный файл с токенами Anketolog, Яндекс.Диска и proxy
 - `MONITORING_DB_PATH`:
   общий SQLite файл для mini app и бота. Если не задан, бот попробует использовать
   соседний каталог `../TelegramMiniAppMonitoring/data/db.sqlite`

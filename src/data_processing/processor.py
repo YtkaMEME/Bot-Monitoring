@@ -7,27 +7,16 @@ from aiogram.types import Message
 from .calculate_targets import fetch_form_data, save_calculation_results, calculate_raw_weights_from_questions
 from .file_processor import read_file, table_validation, create_questions_list
 from .analyzer import analyze_questions
-from .models import AnalysisError, AnalysisResult
+from .models import AnalysisError, AnalysisResult, format_excel_decimal_separator
 from .prepare_target_distributions import prepare_target_distributions
+from .age_groups import normalize_age_question_to_ranges
 from src.utils.cleaner import clean_dict_keys, clean_text
-from src.utils.division_df import division_df, multi_division_df, process_result_with_divider
-
-def extract_group_label(key: str, field: str) -> str:
-    """
-    Извлекает значение разделителя (например, «Женщины») из строки ключа,
-    в которой содержится подстрока вида 'Пол=Женщины | Возраст=18-25'
-
-    Args:
-        key: строка с форматированными разделителями (например, 'Пол=Женщины | Возраст=18-25')
-        field: нужное поле (например, 'Пол')
-
-    Returns:
-        Значение поля (например, 'Женщины'), либо '' если не найдено
-    """
-    for part in key.split(" | "):
-        if part.startswith(f"{field}="):
-            return part.replace(f"{field}=", "")
-    return ""
+from src.utils.division_df import (
+    divider_column_names,
+    division_df,
+    multi_division_df,
+    process_result_with_divider,
+)
 
 async def process_data(
     path: str,
@@ -119,6 +108,12 @@ async def process_data(
         original_target_age = target_age.copy()
         original_target_art = target_art.copy()
 
+        normalize_age_question_to_ranges(
+            questions_list,
+            question_numbers_weights[1],
+            list(target_age.keys()),
+        )
+
         original_data_columns = {}  # сохраняем оригинальные данные по вопросам
 
         for q in questions_list:
@@ -195,8 +190,9 @@ async def process_data(
 
             else:
                 division_results = multi_division_df(questions_list, weights, division)
+                divider_columns = divider_column_names(division)
 
-                for key, (q_list, w_list) in division_results.items():
+                for values, (q_list, w_list) in division_results.items():
                     # Определяем нужный target_division
                     target_division = None
                     if type_analyze != "standard" and any(d in question_numbers_weights for d in division):
@@ -208,18 +204,23 @@ async def process_data(
                             target_division = target_art
 
                     if target_division:
-                        group_label = extract_group_label(key, division[0])
+                        group_label = str(values[0])
                         num = target_division.get(group_label, 0) * sample_size
                     else:
                         num = sample_size if type_analyze != "standard" else num_persons
 
                     result = analyze_questions(q_list, mood_number, nps_number, csi_numbers, num, w_list, tr_number, roti_number)
-                    result = process_result_with_divider(result, key)
+                    result = process_result_with_divider(result, dict(zip(divider_columns, values)))
                     results_list.append(result)
 
             num_standart = num_persons if type_analyze == "standard" else sample_size
             result_standart = analyze_questions(questions_list, mood_number, nps_number, csi_numbers, num_standart, weights, tr_number, roti_number)
-            results_list.append(process_result_with_divider(result_standart, "Общее"))
+            if len(division) == 1:
+                total_divider = "Общее"
+            else:
+                total_divider = dict.fromkeys(divider_columns, "")
+                total_divider[divider_columns[0]] = "Общее"
+            results_list.append(process_result_with_divider(result_standart, total_divider))
 
             # Объединение результатов
             merged_data_frames = []
@@ -256,6 +257,7 @@ async def process_data(
         else:
             result.to_excel(excel_path)
         result.to_csv(csv_path)
+        format_excel_decimal_separator(excel_path)
 
         if message:
             if result.skipped_questions:

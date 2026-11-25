@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import time
@@ -40,6 +42,15 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _proxies() -> dict[str, str] | None:
+    if not config.proxy_url:
+        return None
+    return {
+        "http": config.proxy_url,
+        "https": config.proxy_url,
+    }
+
+
 def sanitize_filename(name: str) -> str:
     name = re.sub(r'[<>:"/\\\\|?*]+', "_", name)
     name = re.sub(r"\s+", " ", name).strip()
@@ -72,6 +83,7 @@ def get_survey_folders() -> Any:
         SURVEY_FOLDER_LIST_URL,
         headers=_headers(),
         json={},
+        proxies=_proxies(),
         timeout=TIMEOUT,
     )
     response.raise_for_status()
@@ -101,6 +113,7 @@ def get_survey_list_all() -> list[dict[str, Any]]:
         SURVEY_LIST_URL,
         headers=_headers(),
         json={},
+        proxies=_proxies(),
         timeout=TIMEOUT,
     )
     response.raise_for_status()
@@ -191,6 +204,7 @@ def create_report(survey_id: int) -> dict[str, Any]:
         SURVEY_REPORT_CREATE_URL,
         headers=_headers(),
         json={"survey_id": survey_id, "format": REPORT_FORMAT},
+        proxies=_proxies(),
         timeout=TIMEOUT,
     )
     response.raise_for_status()
@@ -205,6 +219,7 @@ def get_report_list(survey_id: int) -> list[dict[str, Any]]:
         SURVEY_REPORT_LIST_URL,
         headers=_headers(),
         json={"survey_id": survey_id},
+        proxies=_proxies(),
         timeout=TIMEOUT,
     )
     response.raise_for_status()
@@ -267,6 +282,7 @@ def download_file(url: str, filename: str) -> str:
                     headers=browser_headers,
                     stream=True,
                     allow_redirects=True,
+                    proxies=_proxies(),
                     timeout=DOWNLOAD_TIMEOUT,
                 ) as response:
                     response.raise_for_status()
