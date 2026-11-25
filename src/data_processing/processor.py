@@ -11,6 +11,7 @@ from .models import AnalysisError, AnalysisResult, format_excel_decimal_separato
 from .prepare_target_distributions import prepare_target_distributions
 from .age_groups import normalize_age_question_to_ranges
 from src.utils.cleaner import clean_dict_keys, clean_text
+from src.utils.telegram_text import send_text_in_parts
 from src.utils.division_df import (
     divider_column_names,
     division_df,
@@ -261,10 +262,10 @@ async def process_data(
 
         if message:
             if result.skipped_questions:
-                await message.answer(f"Были пропущены следующие вопросы{result.skipped_questions}")
+                await send_text_in_parts(message, f"Были пропущены следующие вопросы{result.skipped_questions}")
             summary_text = result.build_summary()
             if summary_text:
-                await message.answer(summary_text)
+                await send_text_in_parts(message, summary_text)
 
     except AnalysisError as e:
         if message:
